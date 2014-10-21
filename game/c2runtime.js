@@ -13014,6 +13014,684 @@ cr.shaders["blurvertical"] = {src: ["varying mediump vec2 vTex;",
 	parameters: [["intensity", 0, 1]] }
 ;
 ;
+cr.plugins_.Arr = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var pluginProto = cr.plugins_.Arr.prototype;
+	pluginProto.Type = function(plugin)
+	{
+		this.plugin = plugin;
+		this.runtime = plugin.runtime;
+	};
+	var typeProto = pluginProto.Type.prototype;
+	typeProto.onCreate = function()
+	{
+	};
+	pluginProto.Instance = function(type)
+	{
+		this.type = type;
+		this.runtime = type.runtime;
+	};
+	var instanceProto = pluginProto.Instance.prototype;
+	var arrCache = [];
+	function allocArray()
+	{
+		if (arrCache.length)
+			return arrCache.pop();
+		else
+			return [];
+	};
+	if (!Array.isArray)
+	{
+		Array.isArray = function (vArg) {
+			return Object.prototype.toString.call(vArg) === "[object Array]";
+		};
+	}
+	function freeArray(a)
+	{
+		var i, len;
+		for (i = 0, len = a.length; i < len; i++)
+		{
+			if (Array.isArray(a[i]))
+				freeArray(a[i]);
+		}
+		a.length = 0;
+		arrCache.push(a);
+	};
+	instanceProto.onCreate = function()
+	{
+		this.cx = this.properties[0];
+		this.cy = this.properties[1];
+		this.cz = this.properties[2];
+		if (!this.recycled)
+			this.arr = allocArray();
+		var a = this.arr;
+		a.length = this.cx;
+		var x, y, z;
+		for (x = 0; x < this.cx; x++)
+		{
+			if (!a[x])
+				a[x] = allocArray();
+			a[x].length = this.cy;
+			for (y = 0; y < this.cy; y++)
+			{
+				if (!a[x][y])
+					a[x][y] = allocArray();
+				a[x][y].length = this.cz;
+				for (z = 0; z < this.cz; z++)
+					a[x][y][z] = 0;
+			}
+		}
+		this.forX = 0;
+		this.forY = 0;
+		this.forZ = 0;
+	};
+	instanceProto.onDestroy = function ()
+	{
+		var x;
+		for (x = 0; x < this.cx; x++)
+			freeArray(this.arr[x]);		// will recurse down and recycle other arrays
+		this.arr.length = 0;
+	};
+	instanceProto.at = function (x, y, z)
+	{
+		x = Math.floor(x);
+		y = Math.floor(y);
+		z = Math.floor(z);
+		if (isNaN(x) || x < 0 || x > this.cx - 1)
+			return 0;
+		if (isNaN(y) || y < 0 || y > this.cy - 1)
+			return 0;
+		if (isNaN(z) || z < 0 || z > this.cz - 1)
+			return 0;
+		return this.arr[x][y][z];
+	};
+	instanceProto.set = function (x, y, z, val)
+	{
+		x = Math.floor(x);
+		y = Math.floor(y);
+		z = Math.floor(z);
+		if (isNaN(x) || x < 0 || x > this.cx - 1)
+			return;
+		if (isNaN(y) || y < 0 || y > this.cy - 1)
+			return;
+		if (isNaN(z) || z < 0 || z > this.cz - 1)
+			return;
+		this.arr[x][y][z] = val;
+	};
+	instanceProto.getAsJSON = function ()
+	{
+		return JSON.stringify({
+			"c2array": true,
+			"size": [this.cx, this.cy, this.cz],
+			"data": this.arr
+		});
+	};
+	instanceProto.saveToJSON = function ()
+	{
+		return {
+			"size": [this.cx, this.cy, this.cz],
+			"data": this.arr
+		};
+	};
+	instanceProto.loadFromJSON = function (o)
+	{
+		var sz = o["size"];
+		this.cx = sz[0];
+		this.cy = sz[1];
+		this.cz = sz[2];
+		this.arr = o["data"];
+	};
+	instanceProto.setSize = function (w, h, d)
+	{
+		if (w < 0) w = 0;
+		if (h < 0) h = 0;
+		if (d < 0) d = 0;
+		if (this.cx === w && this.cy === h && this.cz === d)
+			return;		// no change
+		this.cx = w;
+		this.cy = h;
+		this.cz = d;
+		var x, y, z;
+		var a = this.arr;
+		a.length = w;
+		for (x = 0; x < this.cx; x++)
+		{
+			if (cr.is_undefined(a[x]))
+				a[x] = allocArray();
+			a[x].length = h;
+			for (y = 0; y < this.cy; y++)
+			{
+				if (cr.is_undefined(a[x][y]))
+					a[x][y] = allocArray();
+				a[x][y].length = d;
+				for (z = 0; z < this.cz; z++)
+				{
+					if (cr.is_undefined(a[x][y][z]))
+						a[x][y][z] = 0;
+				}
+			}
+		}
+	};
+	function Cnds() {};
+	Cnds.prototype.CompareX = function (x, cmp, val)
+	{
+		return cr.do_cmp(this.at(x, 0, 0), cmp, val);
+	};
+	Cnds.prototype.CompareXY = function (x, y, cmp, val)
+	{
+		return cr.do_cmp(this.at(x, y, 0), cmp, val);
+	};
+	Cnds.prototype.CompareXYZ = function (x, y, z, cmp, val)
+	{
+		return cr.do_cmp(this.at(x, y, z), cmp, val);
+	};
+	instanceProto.doForEachTrigger = function (current_event)
+	{
+		this.runtime.pushCopySol(current_event.solModifiers);
+		current_event.retrigger();
+		this.runtime.popSol(current_event.solModifiers);
+	};
+	Cnds.prototype.ArrForEach = function (dims)
+	{
+        var current_event = this.runtime.getCurrentEventStack().current_event;
+		this.forX = 0;
+		this.forY = 0;
+		this.forZ = 0;
+		switch (dims) {
+		case 0:
+			for (this.forX = 0; this.forX < this.cx; this.forX++)
+			{
+				for (this.forY = 0; this.forY < this.cy; this.forY++)
+				{
+					for (this.forZ = 0; this.forZ < this.cz; this.forZ++)
+					{
+						this.doForEachTrigger(current_event);
+					}
+				}
+			}
+			break;
+		case 1:
+			for (this.forX = 0; this.forX < this.cx; this.forX++)
+			{
+				for (this.forY = 0; this.forY < this.cy; this.forY++)
+				{
+					this.doForEachTrigger(current_event);
+				}
+			}
+			break;
+		case 2:
+			for (this.forX = 0; this.forX < this.cx; this.forX++)
+			{
+				this.doForEachTrigger(current_event);
+			}
+			break;
+		}
+		this.forX = 0;
+		this.forY = 0;
+		this.forZ = 0;
+		return false;
+	};
+	Cnds.prototype.CompareCurrent = function (cmp, val)
+	{
+		return cr.do_cmp(this.at(this.forX, this.forY, this.forZ), cmp, val);
+	};
+	Cnds.prototype.Contains = function(val)
+	{
+		var x, y, z;
+		for (x = 0; x < this.cx; x++)
+		{
+			for (y = 0; y < this.cy; y++)
+			{
+				for (z = 0; z < this.cz; z++)
+				{
+					if (this.arr[x][y][z] === val)
+						return true;
+				}
+			}
+		}
+		return false;
+	};
+	Cnds.prototype.IsEmpty = function ()
+	{
+		return this.cx === 0 || this.cy === 0 || this.cz === 0;
+	};
+	Cnds.prototype.CompareSize = function (axis, cmp, value)
+	{
+		var s = 0;
+		switch (axis) {
+		case 0:
+			s = this.cx;
+			break;
+		case 1:
+			s = this.cy;
+			break;
+		case 2:
+			s = this.cz;
+			break;
+		}
+		return cr.do_cmp(s, cmp, value);
+	};
+	pluginProto.cnds = new Cnds();
+	function Acts() {};
+	Acts.prototype.Clear = function ()
+	{
+		var x, y, z;
+		for (x = 0; x < this.cx; x++)
+			for (y = 0; y < this.cy; y++)
+				for (z = 0; z < this.cz; z++)
+					this.arr[x][y][z] = 0;
+	};
+	Acts.prototype.SetSize = function (w, h, d)
+	{
+		this.setSize(w, h, d);
+	};
+	Acts.prototype.SetX = function (x, val)
+	{
+		this.set(x, 0, 0, val);
+	};
+	Acts.prototype.SetXY = function (x, y, val)
+	{
+		this.set(x, y, 0, val);
+	};
+	Acts.prototype.SetXYZ = function (x, y, z, val)
+	{
+		this.set(x, y, z, val);
+	};
+	Acts.prototype.Push = function (where, value, axis)
+	{
+		var x = 0, y = 0, z = 0;
+		var a = this.arr;
+		switch (axis) {
+		case 0:	// X axis
+			if (where === 0)	// back
+			{
+				x = a.length;
+				a.push(allocArray());
+			}
+			else				// front
+			{
+				x = 0;
+				a.unshift(allocArray());
+			}
+			a[x].length = this.cy;
+			for ( ; y < this.cy; y++)
+			{
+				a[x][y] = allocArray();
+				a[x][y].length = this.cz;
+				for (z = 0; z < this.cz; z++)
+					a[x][y][z] = value;
+			}
+			this.cx++;
+			break;
+		case 1: // Y axis
+			for ( ; x < this.cx; x++)
+			{
+				if (where === 0)	// back
+				{
+					y = a[x].length;
+					a[x].push(allocArray());
+				}
+				else				// front
+				{
+					y = 0;
+					a[x].unshift(allocArray());
+				}
+				a[x][y].length = this.cz;
+				for (z = 0; z < this.cz; z++)
+					a[x][y][z] = value;
+			}
+			this.cy++;
+			break;
+		case 2:	// Z axis
+			for ( ; x < this.cx; x++)
+			{
+				for (y = 0; y < this.cy; y++)
+				{
+					if (where === 0)	// back
+					{
+						a[x][y].push(value);
+					}
+					else				// front
+					{
+						a[x][y].unshift(value);
+					}
+				}
+			}
+			this.cz++;
+			break;
+		}
+	};
+	Acts.prototype.Pop = function (where, axis)
+	{
+		var x = 0, y = 0, z = 0;
+		var a = this.arr;
+		switch (axis) {
+		case 0:	// X axis
+			if (this.cx === 0)
+				break;
+			if (where === 0)	// back
+			{
+				freeArray(a.pop());
+			}
+			else				// front
+			{
+				freeArray(a.shift());
+			}
+			this.cx--;
+			break;
+		case 1: // Y axis
+			if (this.cy === 0)
+				break;
+			for ( ; x < this.cx; x++)
+			{
+				if (where === 0)	// back
+				{
+					freeArray(a[x].pop());
+				}
+				else				// front
+				{
+					freeArray(a[x].shift());
+				}
+			}
+			this.cy--;
+			break;
+		case 2:	// Z axis
+			if (this.cz === 0)
+				break;
+			for ( ; x < this.cx; x++)
+			{
+				for (y = 0; y < this.cy; y++)
+				{
+					if (where === 0)	// back
+					{
+						a[x][y].pop();
+					}
+					else				// front
+					{
+						a[x][y].shift();
+					}
+				}
+			}
+			this.cz--;
+			break;
+		}
+	};
+	Acts.prototype.Reverse = function (axis)
+	{
+		var x = 0, y = 0, z = 0;
+		var a = this.arr;
+		if (this.cx === 0 || this.cy === 0 || this.cz === 0)
+			return;		// no point reversing empty array
+		switch (axis) {
+		case 0:	// X axis
+			a.reverse();
+			break;
+		case 1: // Y axis
+			for ( ; x < this.cx; x++)
+				a[x].reverse();
+			break;
+		case 2:	// Z axis
+			for ( ; x < this.cx; x++)
+				for (y = 0; y < this.cy; y++)
+					a[x][y].reverse();
+			this.cz--;
+			break;
+		}
+	};
+	function compareValues(va, vb)
+	{
+		if (cr.is_number(va) && cr.is_number(vb))
+			return va - vb;
+		else
+		{
+			var sa = "" + va;
+			var sb = "" + vb;
+			if (sa < sb)
+				return -1;
+			else if (sa > sb)
+				return 1;
+			else
+				return 0;
+		}
+	}
+	Acts.prototype.Sort = function (axis)
+	{
+		var x = 0, y = 0, z = 0;
+		var a = this.arr;
+		if (this.cx === 0 || this.cy === 0 || this.cz === 0)
+			return;		// no point sorting empty array
+		switch (axis) {
+		case 0:	// X axis
+			a.sort(function (a, b) {
+				return compareValues(a[0][0], b[0][0]);
+			});
+			break;
+		case 1: // Y axis
+			for ( ; x < this.cx; x++)
+			{
+				a[x].sort(function (a, b) {
+					return compareValues(a[0], b[0]);
+				});
+			}
+			break;
+		case 2:	// Z axis
+			for ( ; x < this.cx; x++)
+			{
+				for (y = 0; y < this.cy; y++)
+				{
+					a[x][y].sort(compareValues);
+				}
+			}
+			break;
+		}
+	};
+	Acts.prototype.Delete = function (index, axis)
+	{
+		var x = 0, y = 0, z = 0;
+		index = Math.floor(index);
+		var a = this.arr;
+		if (index < 0)
+			return;
+		switch (axis) {
+		case 0:	// X axis
+			if (index >= this.cx)
+				break;
+			freeArray(a[index]);
+			a.splice(index, 1);
+			this.cx--;
+			break;
+		case 1: // Y axis
+			if (index >= this.cy)
+				break;
+			for ( ; x < this.cx; x++)
+			{
+				freeArray(a[x][index]);
+				a[x].splice(index, 1);
+			}
+			this.cy--;
+			break;
+		case 2:	// Z axis
+			if (index >= this.cz)
+				break;
+			for ( ; x < this.cx; x++)
+			{
+				for (y = 0; y < this.cy; y++)
+				{
+					a[x][y].splice(index, 1);
+				}
+			}
+			this.cz--;
+			break;
+		}
+	};
+	Acts.prototype.Insert = function (value, index, axis)
+	{
+		var x = 0, y = 0, z = 0;
+		index = Math.floor(index);
+		var a = this.arr;
+		if (index < 0)
+			return;
+		switch (axis) {
+		case 0:	// X axis
+			if (index > this.cx)
+				return;
+			x = index;
+			a.splice(x, 0, allocArray());
+			a[x].length = this.cy;
+			for ( ; y < this.cy; y++)
+			{
+				a[x][y] = allocArray();
+				a[x][y].length = this.cz;
+				for (z = 0; z < this.cz; z++)
+					a[x][y][z] = value;
+			}
+			this.cx++;
+			break;
+		case 1: // Y axis
+			if (index > this.cy)
+				return;
+			for ( ; x < this.cx; x++)
+			{
+				y = index;
+				a[x].splice(y, 0, allocArray());
+				a[x][y].length = this.cz;
+				for (z = 0; z < this.cz; z++)
+					a[x][y][z] = value;
+			}
+			this.cy++;
+			break;
+		case 2:	// Z axis
+			if (index > this.cz)
+				return;
+			for ( ; x < this.cx; x++)
+			{
+				for (y = 0; y < this.cy; y++)
+				{
+					a[x][y].splice(index, 0, value);
+				}
+			}
+			this.cz++;
+			break;
+		}
+	};
+	Acts.prototype.JSONLoad = function (json_)
+	{
+		var o;
+		try {
+			o = JSON.parse(json_);
+		}
+		catch(e) { return; }
+		if (!o["c2array"])		// presumably not a c2array object
+			return;
+		var sz = o["size"];
+		this.cx = sz[0];
+		this.cy = sz[1];
+		this.cz = sz[2];
+		this.arr = o["data"];
+	};
+	Acts.prototype.JSONDownload = function (filename)
+	{
+		var a = document.createElement("a");
+		if (typeof a.download === "undefined")
+		{
+			var str = 'data:text/html,' + encodeURIComponent("<p><a download='" + filename + "' href=\"data:application/json,"
+				+ encodeURIComponent(this.getAsJSON())
+				+ "\">Download link</a></p>");
+			window.open(str);
+		}
+		else
+		{
+			var body = document.getElementsByTagName("body")[0];
+			a.textContent = filename;
+			a.href = "data:application/json," + encodeURIComponent(this.getAsJSON());
+			a.download = filename;
+			body.appendChild(a);
+			var clickEvent = document.createEvent("MouseEvent");
+			clickEvent.initMouseEvent("click", true, true, window, 0, 0, 0, 0, 0, false, false, false, false, 0, null);
+			a.dispatchEvent(clickEvent);
+			body.removeChild(a);
+		}
+	};
+	pluginProto.acts = new Acts();
+	function Exps() {};
+	Exps.prototype.At = function (ret, x, y_, z_)
+	{
+		var y = y_ || 0;
+		var z = z_ || 0;
+		ret.set_any(this.at(x, y, z));
+	};
+	Exps.prototype.Width = function (ret)
+	{
+		ret.set_int(this.cx);
+	};
+	Exps.prototype.Height = function (ret)
+	{
+		ret.set_int(this.cy);
+	};
+	Exps.prototype.Depth = function (ret)
+	{
+		ret.set_int(this.cz);
+	};
+	Exps.prototype.CurX = function (ret)
+	{
+		ret.set_int(this.forX);
+	};
+	Exps.prototype.CurY = function (ret)
+	{
+		ret.set_int(this.forY);
+	};
+	Exps.prototype.CurZ = function (ret)
+	{
+		ret.set_int(this.forZ);
+	};
+	Exps.prototype.CurValue = function (ret)
+	{
+		ret.set_any(this.at(this.forX, this.forY, this.forZ));
+	};
+	Exps.prototype.Front = function (ret)
+	{
+		ret.set_any(this.at(0, 0, 0));
+	};
+	Exps.prototype.Back = function (ret)
+	{
+		ret.set_any(this.at(this.cx - 1, 0, 0));
+	};
+	Exps.prototype.IndexOf = function (ret, v)
+	{
+		for (var i = 0; i < this.cx; i++)
+		{
+			if (this.arr[i][0][0] === v)
+			{
+				ret.set_int(i);
+				return;
+			}
+		}
+		ret.set_int(-1);
+	};
+	Exps.prototype.LastIndexOf = function (ret, v)
+	{
+		for (var i = this.cx - 1; i >= 0; i--)
+		{
+			if (this.arr[i][0][0] === v)
+			{
+				ret.set_int(i);
+				return;
+			}
+		}
+		ret.set_int(-1);
+	};
+	Exps.prototype.AsJSON = function (ret)
+	{
+		ret.set_string(this.getAsJSON());
+	};
+	pluginProto.exps = new Exps();
+}());
+;
+;
 cr.plugins_.Button = function(runtime)
 {
 	this.runtime = runtime;
@@ -13291,13 +13969,13 @@ cr.plugins_.Button = function(runtime)
 }());
 ;
 ;
-cr.plugins_.Dictionary = function(runtime)
+cr.plugins_.Function = function(runtime)
 {
 	this.runtime = runtime;
 };
 (function ()
 {
-	var pluginProto = cr.plugins_.Dictionary.prototype;
+	var pluginProto = cr.plugins_.Function.prototype;
 	pluginProto.Type = function(plugin)
 	{
 		this.plugin = plugin;
@@ -13313,161 +13991,175 @@ cr.plugins_.Dictionary = function(runtime)
 		this.runtime = type.runtime;
 	};
 	var instanceProto = pluginProto.Instance.prototype;
+	var funcStack = [];
+	var funcStackPtr = -1;
+	var isInPreview = false;	// set in onCreate
+	function FuncStackEntry()
+	{
+		this.name = "";
+		this.retVal = 0;
+		this.params = [];
+	};
+	function pushFuncStack()
+	{
+		funcStackPtr++;
+		if (funcStackPtr === funcStack.length)
+			funcStack.push(new FuncStackEntry());
+		return funcStack[funcStackPtr];
+	};
+	function getCurrentFuncStack()
+	{
+		if (funcStackPtr < 0)
+			return null;
+		return funcStack[funcStackPtr];
+	};
+	function getOneAboveFuncStack()
+	{
+		if (!funcStack.length)
+			return null;
+		var i = funcStackPtr + 1;
+		if (i >= funcStack.length)
+			i = funcStack.length - 1;
+		return funcStack[i];
+	};
+	function popFuncStack()
+	{
+;
+		funcStackPtr--;
+	};
 	instanceProto.onCreate = function()
 	{
-		this.dictionary = {};
-		this.cur_key = "";		// current key in for-each loop
-		this.key_count = 0;
-	};
-	instanceProto.saveToJSON = function ()
-	{
-		return this.dictionary;
-	};
-	instanceProto.loadFromJSON = function (o)
-	{
-		this.dictionary = o;
-		this.key_count = 0;
-		for (var p in this.dictionary)
+		isInPreview = (typeof cr_is_preview !== "undefined");
+		var self = this;
+		window["c2_callFunction"] = function (name_, params_)
 		{
-			if (this.dictionary.hasOwnProperty(p))
-				this.key_count++;
-		}
+			var i, len, v;
+			var fs = pushFuncStack();
+			fs.name = name_.toLowerCase();
+			fs.retVal = 0;
+			if (params_)
+			{
+				fs.params.length = params_.length;
+				for (i = 0, len = params_.length; i < len; ++i)
+				{
+					v = params_[i];
+					if (typeof v === "number" || typeof v === "string")
+						fs.params[i] = v;
+					else if (typeof v === "boolean")
+						fs.params[i] = (v ? 1 : 0);
+					else
+						fs.params[i] = 0;
+				}
+			}
+			else
+			{
+				fs.params.length = 0;
+			}
+			self.runtime.trigger(cr.plugins_.Function.prototype.cnds.OnFunction, self, fs.name);
+			popFuncStack();
+			return fs.retVal;
+		};
 	};
 	function Cnds() {};
-	Cnds.prototype.CompareValue = function (key_, cmp_, value_)
+	Cnds.prototype.OnFunction = function (name_)
 	{
-		return cr.do_cmp(this.dictionary[key_], cmp_, value_);
+		var fs = getCurrentFuncStack();
+		if (!fs)
+			return false;
+		return cr.equals_nocase(name_, fs.name);
 	};
-	Cnds.prototype.ForEachKey = function ()
+	Cnds.prototype.CompareParam = function (index_, cmp_, value_)
 	{
-		var current_event = this.runtime.getCurrentEventStack().current_event;
-		for (var p in this.dictionary)
-		{
-			if (this.dictionary.hasOwnProperty(p))
-			{
-				this.cur_key = p;
-				this.runtime.pushCopySol(current_event.solModifiers);
-				current_event.retrigger();
-				this.runtime.popSol(current_event.solModifiers);
-			}
-		}
-		this.cur_key = "";
-		return false;
-	};
-	Cnds.prototype.CompareCurrentValue = function (cmp_, value_)
-	{
-		return cr.do_cmp(this.dictionary[this.cur_key], cmp_, value_);
-	};
-	Cnds.prototype.HasKey = function (key_)
-	{
-		return this.dictionary.hasOwnProperty(key_);
-	};
-	Cnds.prototype.IsEmpty = function ()
-	{
-		return this.key_count === 0;
+		var fs = getCurrentFuncStack();
+		if (!fs)
+			return false;
+		index_ = cr.floor(index_);
+		if (index_ < 0 || index_ >= fs.params.length)
+			return false;
+		return cr.do_cmp(fs.params[index_], cmp_, value_);
 	};
 	pluginProto.cnds = new Cnds();
 	function Acts() {};
-	Acts.prototype.AddKey = function (key_, value_)
+	Acts.prototype.CallFunction = function (name_, params_)
 	{
-		if (!this.dictionary.hasOwnProperty(key_))
-			this.key_count++;
-		this.dictionary[key_] = value_;
-	};
-	Acts.prototype.SetKey = function (key_, value_)
-	{
-		if (this.dictionary.hasOwnProperty(key_))
-			this.dictionary[key_] = value_;
-	};
-	Acts.prototype.DeleteKey = function (key_)
-	{
-		if (this.dictionary.hasOwnProperty(key_))
+		var fs = pushFuncStack();
+		fs.name = name_.toLowerCase();
+		fs.retVal = 0;
+		cr.shallowAssignArray(fs.params, params_);
+		var ran = this.runtime.trigger(cr.plugins_.Function.prototype.cnds.OnFunction, this, fs.name);
+		if (isInPreview && !ran)
 		{
-			delete this.dictionary[key_];
-			this.key_count--;
+;
 		}
+		popFuncStack();
 	};
-	Acts.prototype.Clear = function ()
+	Acts.prototype.SetReturnValue = function (value_)
 	{
-		cr.wipe(this.dictionary);		// avoid garbaging
-		this.key_count = 0;
-	};
-	Acts.prototype.JSONLoad = function (json_)
-	{
-		var o;
-		try {
-			o = JSON.parse(json_);
-		}
-		catch(e) { return; }
-		if (!o["c2dictionary"])		// presumably not a c2dictionary object
-			return;
-		this.dictionary = o["data"];
-		this.key_count = 0;
-		for (var p in this.dictionary)
-		{
-			if (this.dictionary.hasOwnProperty(p))
-				this.key_count++;
-		}
-	};
-	Acts.prototype.JSONDownload = function (filename)
-	{
-		var a = document.createElement("a");
-		if (typeof a.download === "undefined")
-		{
-			var str = 'data:text/html,' + encodeURIComponent("<p><a download='data.json' href=\"data:application/json,"
-				+ encodeURIComponent(JSON.stringify({
-						"c2dictionary": true,
-						"data": this.dictionary
-					}))
-				+ "\">Download link</a></p>");
-			window.open(str);
-		}
+		var fs = getCurrentFuncStack();
+		if (fs)
+			fs.retVal = value_;
 		else
-		{
-			var body = document.getElementsByTagName("body")[0];
-			a.textContent = filename;
-			a.href = "data:application/json," + encodeURIComponent(JSON.stringify({
-						"c2dictionary": true,
-						"data": this.dictionary
-					}));
-			a.download = filename;
-			body.appendChild(a);
-			var clickEvent = document.createEvent("MouseEvent");
-			clickEvent.initMouseEvent("click", true, true, window, 0, 0, 0, 0, 0, false, false, false, false, 0, null);
-			a.dispatchEvent(clickEvent);
-			body.removeChild(a);
-		}
+;
 	};
 	pluginProto.acts = new Acts();
 	function Exps() {};
-	Exps.prototype.Get = function (ret, key_)
+	Exps.prototype.ReturnValue = function (ret)
 	{
-		if (this.dictionary.hasOwnProperty(key_))
-			ret.set_any(this.dictionary[key_]);
+		var fs = getOneAboveFuncStack();
+		if (fs)
+			ret.set_any(fs.retVal);
 		else
 			ret.set_int(0);
 	};
-	Exps.prototype.KeyCount = function (ret)
+	Exps.prototype.ParamCount = function (ret)
 	{
-		ret.set_int(this.key_count);
-	};
-	Exps.prototype.CurrentKey = function (ret)
-	{
-		ret.set_string(this.cur_key);
-	};
-	Exps.prototype.CurrentValue = function (ret)
-	{
-		if (this.dictionary.hasOwnProperty(this.cur_key))
-			ret.set_any(this.dictionary[this.cur_key]);
+		var fs = getCurrentFuncStack();
+		if (fs)
+			ret.set_int(fs.params.length);
 		else
+		{
+;
 			ret.set_int(0);
+		}
 	};
-	Exps.prototype.AsJSON = function (ret)
+	Exps.prototype.Param = function (ret, index_)
 	{
-		ret.set_string(JSON.stringify({
-			"c2dictionary": true,
-			"data": this.dictionary
-		}));
+		index_ = cr.floor(index_);
+		var fs = getCurrentFuncStack();
+		if (fs)
+		{
+			if (index_ >= 0 && index_ < fs.params.length)
+			{
+				ret.set_any(fs.params[index_]);
+			}
+			else
+			{
+;
+				ret.set_int(0);
+			}
+		}
+		else
+		{
+;
+			ret.set_int(0);
+		}
+	};
+	Exps.prototype.Call = function (ret, name_)
+	{
+		var fs = pushFuncStack();
+		fs.name = name_.toLowerCase();
+		fs.retVal = 0;
+		fs.params.length = 0;
+		var i, len;
+		for (i = 2, len = arguments.length; i < len; i++)
+			fs.params.push(arguments[i]);
+		var ran = this.runtime.trigger(cr.plugins_.Function.prototype.cnds.OnFunction, this, fs.name);
+		if (isInPreview && !ran)
+		{
+;
+		}
+		popFuncStack();
+		ret.set_any(fs.retVal);
 	};
 	pluginProto.exps = new Exps();
 }());
@@ -15153,6 +15845,777 @@ cr.plugins_.Sprite = function(runtime)
 	};
 	pluginProto.exps = new Exps();
 }());
+/* global cr,log,assert2 */
+/* jshint globalstrict: true */
+/* jshint strict: true */
+;
+;
+cr.plugins_.Spritefont2 = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var pluginProto = cr.plugins_.Spritefont2.prototype;
+	pluginProto.onCreate = function ()
+	{
+	};
+	pluginProto.Type = function(plugin)
+	{
+		this.plugin = plugin;
+		this.runtime = plugin.runtime;
+	};
+	var typeProto = pluginProto.Type.prototype;
+	typeProto.onCreate = function()
+	{
+		if (this.is_family)
+			return;
+		this.texture_img = new Image();
+		this.texture_img["idtkLoadDisposed"] = true;
+		this.texture_img.src = this.texture_file;
+		this.runtime.waitForImageLoad(this.texture_img);
+		this.webGL_texture = null;
+	};
+	typeProto.onLostWebGLContext = function ()
+	{
+		if (this.is_family)
+			return;
+		this.webGL_texture = null;
+	};
+	typeProto.onRestoreWebGLContext = function ()
+	{
+		if (this.is_family || !this.instances.length)
+			return;
+		if (!this.webGL_texture)
+		{
+			this.webGL_texture = this.runtime.glwrap.loadTexture(this.texture_img, false, this.runtime.linearSampling, this.texture_pixelformat);
+		}
+		var i, len;
+		for (i = 0, len = this.instances.length; i < len; i++)
+			this.instances[i].webGL_texture = this.webGL_texture;
+	};
+	typeProto.unloadTextures = function ()
+	{
+		if (this.is_family || this.instances.length || !this.webGL_texture)
+			return;
+		this.runtime.glwrap.deleteTexture(this.webGL_texture);
+		this.webGL_texture = null;
+	};
+	typeProto.preloadCanvas2D = function (ctx)
+	{
+		ctx.drawImage(this.texture_img, 0, 0);
+	};
+	pluginProto.Instance = function(type)
+	{
+		this.type = type;
+		this.runtime = type.runtime;
+	};
+	var instanceProto = pluginProto.Instance.prototype;
+	instanceProto.onDestroy = function()
+	{
+		freeAllLines (this.lines);
+		freeAllClip  (this.clipList);
+		freeAllClipUV(this.clipUV);
+		cr.wipe(this.characterWidthList);
+	};
+	instanceProto.onCreate = function()
+	{
+		this.texture_img      = this.type.texture_img;
+		this.characterWidth   = this.properties[0];
+		this.characterHeight  = this.properties[1];
+		this.characterSet     = this.properties[2];
+		this.text             = this.properties[3];
+		this.characterScale   = this.properties[4];
+		this.visible          = (this.properties[5] === 0);	// 0=visible, 1=invisible
+		this.halign           = this.properties[6]/2.0;			// 0=left, 1=center, 2=right
+		this.valign           = this.properties[7]/2.0;			// 0=top, 1=center, 2=bottom
+		this.wrapbyword       = (this.properties[9] === 0);	// 0=word, 1=character
+		this.characterSpacing = this.properties[10];
+		this.lineHeight       = this.properties[11];
+		this.textWidth  = 0;
+		this.textHeight = 0;
+		if (this.recycled)
+		{
+			this.lines.length = 0;
+			cr.wipe(this.clipList);
+			cr.wipe(this.clipUV);
+			cr.wipe(this.characterWidthList);
+		}
+		else
+		{
+			this.lines = [];
+			this.clipList = {};
+			this.clipUV = {};
+			this.characterWidthList = {};
+		}
+		this.text_changed = true;
+		this.lastwrapwidth = this.width;
+		if (this.runtime.glwrap)
+		{
+			if (!this.type.webGL_texture)
+			{
+				this.type.webGL_texture = this.runtime.glwrap.loadTexture(this.type.texture_img, false, this.runtime.linearSampling, this.type.texture_pixelformat);
+			}
+			this.webGL_texture = this.type.webGL_texture;
+		}
+		this.SplitSheet();
+	};
+	instanceProto.saveToJSON = function ()
+	{
+		var save = {
+			"t": this.text,
+			"csc": this.characterScale,
+			"csp": this.characterSpacing,
+			"lh": this.lineHeight,
+			"tw": this.textWidth,
+			"th": this.textHeight,
+			"lrt": this.last_render_tick,
+			"cw": {}
+		};
+		for (var ch in this.characterWidthList)
+			save["cw"][ch] = this.characterWidthList[ch];
+		return save;
+	};
+	instanceProto.loadFromJSON = function (o)
+	{
+		this.text = o["t"];
+		this.characterScale = o["csc"];
+		this.characterSpacing = o["csp"];
+		this.lineHeight = o["lh"];
+		this.textWidth = o["tw"];
+		this.textHeight = o["th"];
+		this.last_render_tick = o["lrt"];
+		for(var ch in o["cw"])
+			this.characterWidthList[ch] = o["cw"][ch];
+		this.text_changed = true;
+		this.lastwrapwidth = this.width;
+	};
+	function trimRight(text)
+	{
+		return text.replace(/\s\s*$/, '');
+	}
+	var MAX_CACHE_SIZE = 1000;
+	function alloc(cache,Constructor)
+	{
+		if (cache.length)
+			return cache.pop();
+		else
+			return new Constructor();
+	}
+	function free(cache,data)
+	{
+		if (cache.length < MAX_CACHE_SIZE)
+		{
+			cache.push(data);
+		}
+	}
+	function freeAll(cache,dataList,isArray)
+	{
+		if (isArray) {
+			var i, len;
+			for (i = 0, len = dataList.length; i < len; i++)
+			{
+				free(cache,dataList[i]);
+			}
+			dataList.length = 0;
+		} else {
+			var prop;
+			for(prop in dataList) {
+				if(Object.prototype.hasOwnProperty.call(dataList,prop)) {
+					free(cache,dataList[prop]);
+					delete dataList[prop];
+				}
+			}
+		}
+	}
+	function addLine(inst,lineIndex,cur_line) {
+		var lines = inst.lines;
+		var line;
+		cur_line = trimRight(cur_line);
+		if (lineIndex >= lines.length)
+			lines.push(allocLine());
+		line = lines[lineIndex];
+		line.text = cur_line;
+		line.width = inst.measureWidth(cur_line);
+		inst.textWidth = cr.max(inst.textWidth,line.width);
+	}
+	var linesCache = [];
+	function allocLine()       { return alloc(linesCache,Object); }
+	function freeLine(l)       { free(linesCache,l); }
+	function freeAllLines(arr) { freeAll(linesCache,arr,true); }
+	function addClip(obj,property,x,y,w,h) {
+		if (obj[property] === undefined) {
+			obj[property] = alloc(clipCache,Object);
+		}
+		obj[property].x = x;
+		obj[property].y = y;
+		obj[property].w = w;
+		obj[property].h = h;
+	}
+	var clipCache = [];
+	function allocClip()      { return alloc(clipCache,Object); }
+	function freeAllClip(obj) { freeAll(clipCache,obj,false);}
+	function addClipUV(obj,property,left,top,right,bottom) {
+		if (obj[property] === undefined) {
+			obj[property] = alloc(clipUVCache,cr.rect);
+		}
+		obj[property].left   = left;
+		obj[property].top    = top;
+		obj[property].right  = right;
+		obj[property].bottom = bottom;
+	}
+	var clipUVCache = [];
+	function allocClipUV()      { return alloc(clipUVCache,cr.rect);}
+	function freeAllClipUV(obj) { freeAll(clipUVCache,obj,false);}
+	instanceProto.SplitSheet = function() {
+		var texture      = this.texture_img;
+		var texWidth     = texture.width;
+		var texHeight    = texture.height;
+		var charWidth    = this.characterWidth;
+		var charHeight   = this.characterHeight;
+		var charU        = charWidth /texWidth;
+		var charV        = charHeight/texHeight;
+		var charSet      = this.characterSet ;
+		var cols = Math.floor(texWidth/charWidth);
+		var rows = Math.floor(texHeight/charHeight);
+		for ( var c = 0; c < charSet.length; c++) {
+			if  (c >= cols * rows) break;
+			var x = c%cols;
+			var y = Math.floor(c/cols);
+			var letter = charSet.charAt(c);
+			if (this.runtime.glwrap) {
+				addClipUV(
+					this.clipUV, letter,
+					x * charU ,
+					y * charV ,
+					(x+1) * charU ,
+					(y+1) * charV
+				);
+			} else {
+				addClip(
+					this.clipList, letter,
+					x * charWidth,
+					y * charHeight,
+					charWidth,
+					charHeight
+				);
+			}
+		}
+	};
+	/*
+     *	Word-Wrapping
+     */
+	var wordsCache = [];
+	pluginProto.TokeniseWords = function (text)
+	{
+		wordsCache.length = 0;
+		var cur_word = "";
+		var ch;
+		var i = 0;
+		while (i < text.length)
+		{
+			ch = text.charAt(i);
+			if (ch === "\n")
+			{
+				if (cur_word.length)
+				{
+					wordsCache.push(cur_word);
+					cur_word = "";
+				}
+				wordsCache.push("\n");
+				++i;
+			}
+			else if (ch === " " || ch === "\t" || ch === "-")
+			{
+				do {
+					cur_word += text.charAt(i);
+					i++;
+				}
+				while (i < text.length && (text.charAt(i) === " " || text.charAt(i) === "\t"));
+				wordsCache.push(cur_word);
+				cur_word = "";
+			}
+			else if (i < text.length)
+			{
+				cur_word += ch;
+				i++;
+			}
+		}
+		if (cur_word.length)
+			wordsCache.push(cur_word);
+	};
+	pluginProto.WordWrap = function (inst)
+	{
+		var text = inst.text;
+		var lines = inst.lines;
+		if (!text || !text.length)
+		{
+			freeAllLines(lines);
+			return;
+		}
+		var width = inst.width;
+		if (width <= 2.0)
+		{
+			freeAllLines(lines);
+			return;
+		}
+		var charWidth = inst.characterWidth;
+		var charScale = inst.characterScale;
+		var charSpacing = inst.characterSpacing;
+		if ( (text.length * (charWidth * charScale + charSpacing) - charSpacing) <= width && text.indexOf("\n") === -1)
+		{
+			var all_width = inst.measureWidth(text);
+			if (all_width <= width)
+			{
+				freeAllLines(lines);
+				lines.push(allocLine());
+				lines[0].text = text;
+				lines[0].width = all_width;
+				inst.textWidth  = all_width;
+				inst.textHeight = inst.characterHeight * charScale + inst.lineHeight;
+				return;
+			}
+		}
+		var wrapbyword = inst.wrapbyword;
+		this.WrapText(inst);
+		inst.textHeight = lines.length * (inst.characterHeight * charScale + inst.lineHeight);
+	};
+	pluginProto.WrapText = function (inst)
+	{
+		var wrapbyword = inst.wrapbyword;
+		var text       = inst.text;
+		var lines      = inst.lines;
+		var width      = inst.width;
+		var wordArray;
+		if (wrapbyword) {
+			this.TokeniseWords(text);	// writes to wordsCache
+			wordArray = wordsCache;
+		} else {
+			wordArray = text;
+		}
+		var cur_line = "";
+		var prev_line;
+		var line_width;
+		var i;
+		var lineIndex = 0;
+		var line;
+		var ignore_newline = false;
+		for (i = 0; i < wordArray.length; i++)
+		{
+			if (wordArray[i] === "\n")
+			{
+				if (ignore_newline === true) {
+					ignore_newline = false;
+				} else {
+					addLine(inst,lineIndex,cur_line);
+					lineIndex++;
+				}
+				cur_line = "";
+				continue;
+			}
+			ignore_newline = false;
+			prev_line = cur_line;
+			cur_line += wordArray[i];
+			line_width = inst.measureWidth(trimRight(cur_line));
+			if (line_width > width)
+			{
+				if (prev_line === "") {
+					addLine(inst,lineIndex,cur_line);
+					cur_line = "";
+					ignore_newline = true;
+				} else {
+					addLine(inst,lineIndex,prev_line);
+					cur_line = wordArray[i];
+				}
+				lineIndex++;
+				if (!wrapbyword && cur_line === " ")
+					cur_line = "";
+			}
+		}
+		if (trimRight(cur_line).length)
+		{
+			addLine(inst,lineIndex,cur_line);
+			lineIndex++;
+		}
+		for (i = lineIndex; i < lines.length; i++)
+			freeLine(lines[i]);
+		lines.length = lineIndex;
+	};
+	instanceProto.measureWidth = function(text) {
+		var spacing = this.characterSpacing;
+		var len     = text.length;
+		var width   = 0;
+		for (var i = 0; i < len; i++) {
+			width += this.getCharacterWidth(text.charAt(i)) * this.characterScale + spacing;
+		}
+		width -= (width > 0) ? spacing : 0;
+		return width;
+	};
+	/***/
+	instanceProto.getCharacterWidth = function(character) {
+		var widthList = this.characterWidthList;
+		if (widthList[character] !== undefined) {
+			return widthList[character];
+		} else {
+			return this.characterWidth;
+		}
+	};
+	instanceProto.rebuildText = function() {
+		if (this.text_changed || this.width !== this.lastwrapwidth) {
+			this.textWidth = 0;
+			this.textHeight = 0;
+			this.type.plugin.WordWrap(this);
+			this.text_changed = false;
+			this.lastwrapwidth = this.width;
+		}
+	};
+	var EPSILON = 0.00001;
+	instanceProto.draw = function(ctx, glmode)
+	{
+		var texture = this.texture_img;
+		if (this.text !== "" && texture != null) {
+			this.rebuildText();
+			if (this.height < this.characterHeight*this.characterScale + this.lineHeight) {
+				return;
+			}
+			ctx.globalAlpha = this.opacity;
+			var myx = this.x;
+			var myy = this.y;
+			if (this.runtime.pixel_rounding)
+			{
+				myx = Math.round(myx);
+				myy = Math.round(myy);
+			}
+			var viewLeft = this.layer.viewLeft;
+			var viewTop = this.layer.viewTop;
+			var viewRight = this.layer.viewRight;
+			var viewBottom = this.layer.viewBottom;
+			ctx.save();
+			ctx.translate(myx, myy);
+			ctx.rotate(this.angle);
+			var ha         = this.halign;
+			var va         = this.valign;
+			var scale      = this.characterScale;
+			var charHeight = this.characterHeight * scale;
+			var lineHeight = this.lineHeight;
+			var charSpace  = this.characterSpacing;
+			var lines = this.lines;
+			var textHeight = this.textHeight;
+			var letterWidth;
+			var halign;
+			var valign = va * cr.max(0,(this.height - textHeight));
+			var offx = -(this.hotspotX * this.width);
+			var offy = -(this.hotspotY * this.height);
+			offy += valign;
+			var drawX ;
+			var drawY = offy;
+			var roundX, roundY;
+			for(var i = 0; i < lines.length; i++) {
+				var line = lines[i].text;
+				var len  = lines[i].width;
+				halign = ha * cr.max(0,this.width - len);
+				drawX = offx + halign;
+				drawY += lineHeight;
+				if (myy + drawY + charHeight < viewTop)
+				{
+					drawY += charHeight;
+					continue;
+				}
+				for(var j = 0; j < line.length; j++) {
+					var letter = line.charAt(j);
+					letterWidth = this.getCharacterWidth(letter);
+					var clip = this.clipList[letter];
+					if (myx + drawX + letterWidth * scale + charSpace < viewLeft)
+					{
+						drawX += letterWidth * scale + charSpace;
+						continue;
+					}
+					if ( drawX + letterWidth * scale > this.width + EPSILON ) {
+						break;
+					}
+					if (clip !== undefined) {
+						roundX = drawX;
+						roundY = drawY;
+						if (this.angle === 0)
+						{
+							roundX = Math.round(roundX);
+							roundY = Math.round(roundY);
+						}
+						ctx.drawImage( this.texture_img,
+									 clip.x, clip.y, clip.w, clip.h,
+									 roundX,roundY,clip.w*scale,clip.h*scale);
+					}
+					drawX += letterWidth * scale + charSpace;
+					if (myx + drawX > viewRight)
+						break;
+				}
+				drawY += charHeight;
+				if (drawY + charHeight + lineHeight > this.height || myy + drawY > viewBottom)
+				{
+					break;
+				}
+			}
+			ctx.restore();
+		}
+	};
+	var dQuad = new cr.quad();
+	function rotateQuad(quad,cosa,sina) {
+		var x_temp;
+		x_temp   = (quad.tlx * cosa) - (quad.tly * sina);
+		quad.tly = (quad.tly * cosa) + (quad.tlx * sina);
+		quad.tlx = x_temp;
+		x_temp    = (quad.trx * cosa) - (quad.try_ * sina);
+		quad.try_ = (quad.try_ * cosa) + (quad.trx * sina);
+		quad.trx  = x_temp;
+		x_temp   = (quad.blx * cosa) - (quad.bly * sina);
+		quad.bly = (quad.bly * cosa) + (quad.blx * sina);
+		quad.blx = x_temp;
+		x_temp    = (quad.brx * cosa) - (quad.bry * sina);
+		quad.bry = (quad.bry * cosa) + (quad.brx * sina);
+		quad.brx  = x_temp;
+	}
+	instanceProto.drawGL = function(glw)
+	{
+		glw.setTexture(this.webGL_texture);
+		glw.setOpacity(this.opacity);
+		if (!this.text)
+			return;
+		this.rebuildText();
+		if (this.height < this.characterHeight*this.characterScale + this.lineHeight) {
+			return;
+		}
+		this.update_bbox();
+		var q = this.bquad;
+		var ox = 0;
+		var oy = 0;
+		if (this.runtime.pixel_rounding)
+		{
+			ox = Math.round(this.x) - this.x;
+			oy = Math.round(this.y) - this.y;
+		}
+		var viewLeft = this.layer.viewLeft;
+		var viewTop = this.layer.viewTop;
+		var viewRight = this.layer.viewRight;
+		var viewBottom = this.layer.viewBottom;
+		var angle      = this.angle;
+		var ha         = this.halign;
+		var va         = this.valign;
+		var scale      = this.characterScale;
+		var charHeight = this.characterHeight * scale;   // to precalculate in onCreate or on change
+		var lineHeight = this.lineHeight;
+		var charSpace  = this.characterSpacing;
+		var lines = this.lines;
+		var textHeight = this.textHeight;
+		var letterWidth;
+		var cosa,sina;
+		if (angle !== 0)
+		{
+			cosa = Math.cos(angle);
+			sina = Math.sin(angle);
+		}
+		var halign;
+		var valign = va * cr.max(0,(this.height - textHeight));
+		var offx = q.tlx + ox;
+		var offy = q.tly + oy;
+		var drawX ;
+		var drawY = valign;
+		var roundX, roundY;
+		for(var i = 0; i < lines.length; i++) {
+			var line       = lines[i].text;
+			var lineWidth  = lines[i].width;
+			halign = ha * cr.max(0,this.width - lineWidth);
+			drawX = halign;
+			drawY += lineHeight;
+			if (offy + drawY + charHeight < viewTop)
+			{
+				drawY += charHeight;
+				continue;
+			}
+			for(var j = 0; j < line.length; j++) {
+				var letter = line.charAt(j);
+				letterWidth = this.getCharacterWidth(letter);
+				var clipUV = this.clipUV[letter];
+				if (offx + drawX + letterWidth * scale + charSpace < viewLeft)
+				{
+					drawX += letterWidth * scale + charSpace;
+					continue;
+				}
+				if (drawX + letterWidth * scale > this.width + EPSILON)
+				{
+					break;
+				}
+				if (clipUV !== undefined) {
+					var clipWidth  = this.characterWidth*scale;
+					var clipHeight = this.characterHeight*scale;
+					roundX = drawX;
+					roundY = drawY;
+					if (angle === 0)
+					{
+						roundX = Math.round(roundX);
+						roundY = Math.round(roundY);
+					}
+					dQuad.tlx  = roundX;
+					dQuad.tly  = roundY;
+					dQuad.trx  = roundX + clipWidth;
+					dQuad.try_ = roundY ;
+					dQuad.blx  = roundX;
+					dQuad.bly  = roundY + clipHeight;
+					dQuad.brx  = roundX + clipWidth;
+					dQuad.bry  = roundY + clipHeight;
+					if(angle !== 0)
+					{
+						rotateQuad(dQuad,cosa,sina);
+					}
+					dQuad.offset(offx,offy);
+					glw.quadTex(
+						dQuad.tlx, dQuad.tly,
+						dQuad.trx, dQuad.try_,
+						dQuad.brx, dQuad.bry,
+						dQuad.blx, dQuad.bly,
+						clipUV
+					);
+				}
+				drawX += letterWidth * scale + charSpace;
+				if (offx + drawX > viewRight)
+					break;
+			}
+			drawY += charHeight;
+			if (drawY + charHeight + lineHeight > this.height || offy + drawY > viewBottom)
+			{
+				break;
+			}
+		}
+	};
+	function Cnds() {}
+	Cnds.prototype.CompareText = function(text_to_compare, case_sensitive)
+	{
+		if (case_sensitive)
+			return this.text == text_to_compare;
+		else
+			return cr.equals_nocase(this.text, text_to_compare);
+	};
+	pluginProto.cnds = new Cnds();
+	function Acts() {}
+	Acts.prototype.SetText = function(param)
+	{
+		if (cr.is_number(param) && param < 1e9)
+			param = Math.round(param * 1e10) / 1e10;	// round to nearest ten billionth - hides floating point errors
+		var text_to_set = param.toString();
+		if (this.text !== text_to_set)
+		{
+			this.text = text_to_set;
+			this.text_changed = true;
+			this.runtime.redraw = true;
+		}
+	};
+	Acts.prototype.AppendText = function(param)
+	{
+		if (cr.is_number(param))
+			param = Math.round(param * 1e10) / 1e10;	// round to nearest ten billionth - hides floating point errors
+		var text_to_append = param.toString();
+		if (text_to_append)	// not empty
+		{
+			this.text += text_to_append;
+			this.text_changed = true;
+			this.runtime.redraw = true;
+		}
+	};
+	Acts.prototype.SetScale = function(param)
+	{
+		if (param !== this.characterScale) {
+			this.characterScale = param;
+			this.text_changed = true;
+			this.runtime.redraw = true;
+		}
+	};
+	Acts.prototype.SetCharacterSpacing = function(param)
+	{
+		if (param !== this.CharacterSpacing) {
+			this.characterSpacing = param;
+			this.text_changed = true;
+			this.runtime.redraw = true;
+		}
+	};
+	Acts.prototype.SetLineHeight = function(param)
+	{
+		if (param !== this.lineHeight) {
+			this.lineHeight = param;
+			this.text_changed = true;
+			this.runtime.redraw = true;
+		}
+	};
+	instanceProto.SetCharWidth = function(character,width) {
+		var w = parseInt(width,10);
+		if (this.characterWidthList[character] !== w) {
+			this.characterWidthList[character] = w;
+			this.text_changed = true;
+			this.runtime.redraw = true;
+		}
+	};
+	Acts.prototype.SetCharacterWidth = function(characterSet,width)
+	{
+		if (characterSet !== "") {
+			for(var c = 0; c < characterSet.length; c++) {
+				this.SetCharWidth(characterSet.charAt(c),width);
+			}
+		}
+	};
+	Acts.prototype.SetEffect = function (effect)
+	{
+		this.compositeOp = cr.effectToCompositeOp(effect);
+		cr.setGLBlend(this, effect, this.runtime.gl);
+		this.runtime.redraw = true;
+	};
+	Acts.prototype.SetHAlign = function (a)
+	{
+		this.halign = a / 2.0;
+		this.text_changed = true;
+		this.runtime.redraw = true;
+	};
+	Acts.prototype.SetVAlign = function (a)
+	{
+		this.valign = a / 2.0;
+		this.text_changed = true;
+		this.runtime.redraw = true;
+	};
+	pluginProto.acts = new Acts();
+	function Exps() {}
+	Exps.prototype.CharacterWidth = function(ret,character)
+	{
+		ret.set_int(this.getCharacterWidth(character));
+	};
+	Exps.prototype.CharacterHeight = function(ret)
+	{
+		ret.set_int(this.characterHeight);
+	};
+	Exps.prototype.CharacterScale = function(ret)
+	{
+		ret.set_float(this.characterScale);
+	};
+	Exps.prototype.CharacterSpacing = function(ret)
+	{
+		ret.set_int(this.characterSpacing);
+	};
+	Exps.prototype.LineHeight = function(ret)
+	{
+		ret.set_int(this.lineHeight);
+	};
+	Exps.prototype.Text = function(ret)
+	{
+		ret.set_string(this.text);
+	};
+	Exps.prototype.TextWidth = function (ret)
+	{
+		this.rebuildText();
+		ret.set_float(this.textWidth);
+	};
+	Exps.prototype.TextHeight = function (ret)
+	{
+		this.rebuildText();
+		ret.set_float(this.textHeight);
+	};
+	pluginProto.exps = new Exps();
+}());
 ;
 ;
 cr.plugins_.Text = function(runtime)
@@ -16236,12 +17699,706 @@ cr.plugins_.sliderbar = function(runtime)
 	};
 	pluginProto.exps = new Exps();
 }());
+;
+;
+cr.behaviors.Bullet = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var behaviorProto = cr.behaviors.Bullet.prototype;
+	behaviorProto.Type = function(behavior, objtype)
+	{
+		this.behavior = behavior;
+		this.objtype = objtype;
+		this.runtime = behavior.runtime;
+	};
+	var behtypeProto = behaviorProto.Type.prototype;
+	behtypeProto.onCreate = function()
+	{
+	};
+	behaviorProto.Instance = function(type, inst)
+	{
+		this.type = type;
+		this.behavior = type.behavior;
+		this.inst = inst;				// associated object instance to modify
+		this.runtime = type.runtime;
+	};
+	var behinstProto = behaviorProto.Instance.prototype;
+	behinstProto.onCreate = function()
+	{
+		var speed = this.properties[0];
+		this.acc = this.properties[1];
+		this.g = this.properties[2];
+		this.bounceOffSolid = (this.properties[3] !== 0);
+		this.setAngle = (this.properties[4] !== 0);
+		this.dx = Math.cos(this.inst.angle) * speed;
+		this.dy = Math.sin(this.inst.angle) * speed;
+		this.lastx = this.inst.x;
+		this.lasty = this.inst.y;
+		this.lastKnownAngle = this.inst.angle;
+		this.travelled = 0;
+		this.enabled = (this.properties[5] !== 0);
+	};
+	behinstProto.saveToJSON = function ()
+	{
+		return {
+			"acc": this.acc,
+			"g": this.g,
+			"dx": this.dx,
+			"dy": this.dy,
+			"lx": this.lastx,
+			"ly": this.lasty,
+			"lka": this.lastKnownAngle,
+			"t": this.travelled,
+			"e": this.enabled
+		};
+	};
+	behinstProto.loadFromJSON = function (o)
+	{
+		this.acc = o["acc"];
+		this.g = o["g"];
+		this.dx = o["dx"];
+		this.dy = o["dy"];
+		this.lastx = o["lx"];
+		this.lasty = o["ly"];
+		this.lastKnownAngle = o["lka"];
+		this.travelled = o["t"];
+		this.enabled = o["e"];
+	};
+	behinstProto.tick = function ()
+	{
+		if (!this.enabled)
+			return;
+		var dt = this.runtime.getDt(this.inst);
+		var s, a;
+		var bounceSolid, bounceAngle;
+		if (this.inst.angle !== this.lastKnownAngle)
+		{
+			if (this.setAngle)
+			{
+				s = cr.distanceTo(0, 0, this.dx, this.dy);
+				this.dx = Math.cos(this.inst.angle) * s;
+				this.dy = Math.sin(this.inst.angle) * s;
+			}
+			this.lastKnownAngle = this.inst.angle;
+		}
+		if (this.acc !== 0)
+		{
+			s = cr.distanceTo(0, 0, this.dx, this.dy);
+			if (this.dx === 0 && this.dy === 0)
+				a = this.inst.angle;
+			else
+				a = cr.angleTo(0, 0, this.dx, this.dy);
+			s += this.acc * dt;
+			if (s < 0)
+				s = 0;
+			this.dx = Math.cos(a) * s;
+			this.dy = Math.sin(a) * s;
+		}
+		if (this.g !== 0)
+			this.dy += this.g * dt;
+		this.lastx = this.inst.x;
+		this.lasty = this.inst.y;
+		if (this.dx !== 0 || this.dy !== 0)
+		{
+			this.inst.x += this.dx * dt;
+			this.inst.y += this.dy * dt;
+			this.travelled += cr.distanceTo(0, 0, this.dx * dt, this.dy * dt)
+			if (this.setAngle)
+			{
+				this.inst.angle = cr.angleTo(0, 0, this.dx, this.dy);
+				this.inst.set_bbox_changed();
+				this.lastKnownAngle = this.inst.angle;
+			}
+			this.inst.set_bbox_changed();
+			if (this.bounceOffSolid)
+			{
+				bounceSolid = this.runtime.testOverlapSolid(this.inst);
+				if (bounceSolid)
+				{
+					this.runtime.registerCollision(this.inst, bounceSolid);
+					s = cr.distanceTo(0, 0, this.dx, this.dy);
+					bounceAngle = this.runtime.calculateSolidBounceAngle(this.inst, this.lastx, this.lasty);
+					this.dx = Math.cos(bounceAngle) * s;
+					this.dy = Math.sin(bounceAngle) * s;
+					this.inst.x += this.dx * dt;			// move out for one tick since the object can't have spent a tick in the solid
+					this.inst.y += this.dy * dt;
+					this.inst.set_bbox_changed();
+					if (this.setAngle)
+					{
+						this.inst.angle = bounceAngle;
+						this.lastKnownAngle = bounceAngle;
+						this.inst.set_bbox_changed();
+					}
+					if (!this.runtime.pushOutSolid(this.inst, this.dx / s, this.dy / s, Math.max(s * 2.5 * dt, 30)))
+						this.runtime.pushOutSolidNearest(this.inst, 100);
+				}
+			}
+		}
+	};
+	function Cnds() {};
+	Cnds.prototype.CompareSpeed = function (cmp, s)
+	{
+		return cr.do_cmp(cr.distanceTo(0, 0, this.dx, this.dy), cmp, s);
+	};
+	Cnds.prototype.CompareTravelled = function (cmp, d)
+	{
+		return cr.do_cmp(this.travelled, cmp, d);
+	};
+	behaviorProto.cnds = new Cnds();
+	function Acts() {};
+	Acts.prototype.SetSpeed = function (s)
+	{
+		var a = cr.angleTo(0, 0, this.dx, this.dy);
+		this.dx = Math.cos(a) * s;
+		this.dy = Math.sin(a) * s;
+	};
+	Acts.prototype.SetAcceleration = function (a)
+	{
+		this.acc = a;
+	};
+	Acts.prototype.SetGravity = function (g)
+	{
+		this.g = g;
+	};
+	Acts.prototype.SetAngleOfMotion = function (a)
+	{
+		a = cr.to_radians(a);
+		var s = cr.distanceTo(0, 0, this.dx, this.dy)
+		this.dx = Math.cos(a) * s;
+		this.dy = Math.sin(a) * s;
+	};
+	Acts.prototype.Bounce = function (objtype)
+	{
+		if (!objtype)
+			return;
+		var otherinst = objtype.getFirstPicked(this.inst);
+		if (!otherinst)
+			return;
+		var dt = this.runtime.getDt(this.inst);
+		var s = cr.distanceTo(0, 0, this.dx, this.dy);
+		var bounceAngle = this.runtime.calculateSolidBounceAngle(this.inst, this.lastx, this.lasty, otherinst);
+		this.dx = Math.cos(bounceAngle) * s;
+		this.dy = Math.sin(bounceAngle) * s;
+		this.inst.x += this.dx * dt;			// move out for one tick since the object can't have spent a tick in the solid
+		this.inst.y += this.dy * dt;
+		this.inst.set_bbox_changed();
+		if (this.setAngle)
+		{
+			this.inst.angle = bounceAngle;
+			this.lastKnownAngle = bounceAngle;
+			this.inst.set_bbox_changed();
+		}
+		if (this.bounceOffSolid)
+		{
+			if (!this.runtime.pushOutSolid(this.inst, this.dx / s, this.dy / s, Math.max(s * 2.5 * dt, 30)))
+				this.runtime.pushOutSolidNearest(this.inst, 100);
+		}
+		else
+		{
+			this.runtime.pushOut(this.inst, this.dx / s, this.dy / s, Math.max(s * 2.5 * dt, 30), otherinst)
+		}
+	};
+	Acts.prototype.SetEnabled = function (en)
+	{
+		this.enabled = (en === 1);
+	};
+	behaviorProto.acts = new Acts();
+	function Exps() {};
+	Exps.prototype.Speed = function (ret)
+	{
+		var s = cr.distanceTo(0, 0, this.dx, this.dy);
+		s = cr.round6dp(s);
+		ret.set_float(s);
+	};
+	Exps.prototype.Acceleration = function (ret)
+	{
+		ret.set_float(this.acc);
+	};
+	Exps.prototype.AngleOfMotion = function (ret)
+	{
+		ret.set_float(cr.to_degrees(cr.angleTo(0, 0, this.dx, this.dy)));
+	};
+	Exps.prototype.DistanceTravelled = function (ret)
+	{
+		ret.set_float(this.travelled);
+	};
+	behaviorProto.exps = new Exps();
+}());
+;
+;
+cr.behaviors.EightDir = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var behaviorProto = cr.behaviors.EightDir.prototype;
+	behaviorProto.Type = function(behavior, objtype)
+	{
+		this.behavior = behavior;
+		this.objtype = objtype;
+		this.runtime = behavior.runtime;
+	};
+	var behtypeProto = behaviorProto.Type.prototype;
+	behtypeProto.onCreate = function()
+	{
+	};
+	behaviorProto.Instance = function(type, inst)
+	{
+		this.type = type;
+		this.behavior = type.behavior;
+		this.inst = inst;				// associated object instance to modify
+		this.runtime = type.runtime;
+		this.upkey = false;
+		this.downkey = false;
+		this.leftkey = false;
+		this.rightkey = false;
+		this.ignoreInput = false;
+		this.simup = false;
+		this.simdown = false;
+		this.simleft = false;
+		this.simright = false;
+		this.lastuptick = -1;
+		this.lastdowntick = -1;
+		this.lastlefttick = -1;
+		this.lastrighttick = -1;
+		this.dx = 0;
+		this.dy = 0;
+	};
+	var behinstProto = behaviorProto.Instance.prototype;
+	behinstProto.onCreate = function()
+	{
+		this.maxspeed = this.properties[0];
+		this.acc = this.properties[1];
+		this.dec = this.properties[2];
+		this.directions = this.properties[3];	// 0=Up & down, 1=Left & right, 2=4 directions, 3=8 directions"
+		this.angleMode = this.properties[4];	// 0=No,1=90-degree intervals, 2=45-degree intervals, 3=360 degree (smooth)
+		this.defaultControls = (this.properties[5] === 1);	// 0=no, 1=yes
+		this.enabled = (this.properties[6] !== 0);
+		if (this.defaultControls && !this.runtime.isDomFree)
+		{
+			jQuery(document).keydown(
+				(function (self) {
+					return function(info) {
+						self.onKeyDown(info);
+					};
+				})(this)
+			);
+			jQuery(document).keyup(
+				(function (self) {
+					return function(info) {
+						self.onKeyUp(info);
+					};
+				})(this)
+			);
+		}
+	};
+	behinstProto.saveToJSON = function ()
+	{
+		return {
+			"dx": this.dx,
+			"dy": this.dy,
+			"enabled": this.enabled,
+			"maxspeed": this.maxspeed,
+			"acc": this.acc,
+			"dec": this.dec,
+			"ignoreInput": this.ignoreInput
+		};
+	};
+	behinstProto.loadFromJSON = function (o)
+	{
+		this.dx = o["dx"];
+		this.dy = o["dy"];
+		this.enabled = o["enabled"];
+		this.maxspeed = o["maxspeed"];
+		this.acc = o["acc"];
+		this.dec = o["dec"];
+		this.ignoreInput = o["ignoreInput"];
+		this.upkey = false;
+		this.downkey = false;
+		this.leftkey = false;
+		this.rightkey = false;
+		this.simup = false;
+		this.simdown = false;
+		this.simleft = false;
+		this.simright = false;
+		this.lastuptick = -1;
+		this.lastdowntick = -1;
+		this.lastlefttick = -1;
+		this.lastrighttick = -1;
+	};
+	behinstProto.onKeyDown = function (info)
+	{
+		var tickcount = this.runtime.tickcount;
+		switch (info.which) {
+		case 37:	// left
+			info.preventDefault();
+			if (this.lastlefttick < tickcount)
+				this.leftkey = true;
+			break;
+		case 38:	// up
+			info.preventDefault();
+			if (this.lastuptick < tickcount)
+				this.upkey = true;
+			break;
+		case 39:	// right
+			info.preventDefault();
+			if (this.lastrighttick < tickcount)
+				this.rightkey = true;
+			break;
+		case 40:	// down
+			info.preventDefault();
+			if (this.lastdowntick < tickcount)
+				this.downkey = true;
+			break;
+		}
+	};
+	behinstProto.onKeyUp = function (info)
+	{
+		var tickcount = this.runtime.tickcount;
+		switch (info.which) {
+		case 37:	// left
+			info.preventDefault();
+			this.leftkey = false;
+			this.lastlefttick = tickcount;
+			break;
+		case 38:	// up
+			info.preventDefault();
+			this.upkey = false;
+			this.lastuptick = tickcount;
+			break;
+		case 39:	// right
+			info.preventDefault();
+			this.rightkey = false;
+			this.lastrighttick = tickcount;
+			break;
+		case 40:	// down
+			info.preventDefault();
+			this.downkey = false;
+			this.lastdowntick = tickcount;
+			break;
+		}
+	};
+	behinstProto.tick = function ()
+	{
+		var dt = this.runtime.getDt(this.inst);
+		var left = this.leftkey || this.simleft;
+		var right = this.rightkey || this.simright;
+		var up = this.upkey || this.simup;
+		var down = this.downkey || this.simdown;
+		this.simleft = false;
+		this.simright = false;
+		this.simup = false;
+		this.simdown = false;
+		if (!this.enabled)
+			return;
+		var collobj = this.runtime.testOverlapSolid(this.inst);
+		if (collobj)
+		{
+			this.runtime.registerCollision(this.inst, collobj);
+			if (!this.runtime.pushOutSolidNearest(this.inst))
+				return;		// must be stuck in solid
+		}
+		if (this.ignoreInput)
+		{
+			left = false;
+			right = false;
+			up = false;
+			down = false;
+		}
+		if (this.directions === 0)
+		{
+			left = false;
+			right = false;
+		}
+		else if (this.directions === 1)
+		{
+			up = false;
+			down = false;
+		}
+		if (this.directions === 2 && (up || down))
+		{
+			left = false;
+			right = false;
+		}
+		if (left == right)	// both up or both down
+		{
+			if (this.dx < 0)
+			{
+				this.dx += this.dec * dt;
+				if (this.dx > 0)
+					this.dx = 0;
+			}
+			else if (this.dx > 0)
+			{
+				this.dx -= this.dec * dt;
+				if (this.dx < 0)
+					this.dx = 0;
+			}
+		}
+		if (up == down)
+		{
+			if (this.dy < 0)
+			{
+				this.dy += this.dec * dt;
+				if (this.dy > 0)
+					this.dy = 0;
+			}
+			else if (this.dy > 0)
+			{
+				this.dy -= this.dec * dt;
+				if (this.dy < 0)
+					this.dy = 0;
+			}
+		}
+		if (left && !right)
+		{
+			if (this.dx > 0)
+				this.dx -= (this.acc + this.dec) * dt;
+			else
+				this.dx -= this.acc * dt;
+		}
+		if (right && !left)
+		{
+			if (this.dx < 0)
+				this.dx += (this.acc + this.dec) * dt;
+			else
+				this.dx += this.acc * dt;
+		}
+		if (up && !down)
+		{
+			if (this.dy > 0)
+				this.dy -= (this.acc + this.dec) * dt;
+			else
+				this.dy -= this.acc * dt;
+		}
+		if (down && !up)
+		{
+			if (this.dy < 0)
+				this.dy += (this.acc + this.dec) * dt;
+			else
+				this.dy += this.acc * dt;
+		}
+		var ax, ay;
+		if (this.dx !== 0 || this.dy !== 0)
+		{
+			var speed = Math.sqrt(this.dx * this.dx + this.dy * this.dy);
+			if (speed > this.maxspeed)
+			{
+				var a = Math.atan2(this.dy, this.dx);
+				this.dx = this.maxspeed * Math.cos(a);
+				this.dy = this.maxspeed * Math.sin(a);
+			}
+			var oldx = this.inst.x;
+			var oldy = this.inst.y;
+			var oldangle = this.inst.angle;
+			this.inst.x += this.dx * dt;
+			this.inst.set_bbox_changed();
+			collobj = this.runtime.testOverlapSolid(this.inst);
+			if (collobj)
+			{
+				this.inst.x = oldx;
+				this.dx = 0;
+				this.inst.set_bbox_changed();
+				this.runtime.registerCollision(this.inst, collobj);
+			}
+			this.inst.y += this.dy * dt;
+			this.inst.set_bbox_changed();
+			collobj = this.runtime.testOverlapSolid(this.inst);
+			if (collobj)
+			{
+				this.inst.y = oldy;
+				this.dy = 0;
+				this.inst.set_bbox_changed();
+				this.runtime.registerCollision(this.inst, collobj);
+			}
+			ax = cr.round6dp(this.dx);
+			ay = cr.round6dp(this.dy);
+			if (ax !== 0 || ay !== 0)
+			{
+				if (this.angleMode === 1)	// 90 degree intervals
+					this.inst.angle = cr.to_clamped_radians(Math.round(cr.to_degrees(Math.atan2(ay, ax)) / 90.0) * 90.0);
+				else if (this.angleMode === 2)	// 45 degree intervals
+					this.inst.angle = cr.to_clamped_radians(Math.round(cr.to_degrees(Math.atan2(ay, ax)) / 45.0) * 45.0);
+				else if (this.angleMode === 3)	// 360 degree
+					this.inst.angle = Math.atan2(ay, ax);
+			}
+			this.inst.set_bbox_changed();
+			if (this.inst.angle != oldangle)
+			{
+				collobj = this.runtime.testOverlapSolid(this.inst);
+				if (collobj)
+				{
+					this.inst.angle = oldangle;
+					this.inst.set_bbox_changed();
+					this.runtime.registerCollision(this.inst, collobj);
+				}
+			}
+		}
+	};
+	function Cnds() {};
+	Cnds.prototype.IsMoving = function ()
+	{
+		return this.dx !== 0 || this.dy !== 0;
+	};
+	Cnds.prototype.CompareSpeed = function (cmp, s)
+	{
+		var speed = Math.sqrt(this.dx * this.dx + this.dy * this.dy);
+		return cr.do_cmp(speed, cmp, s);
+	};
+	behaviorProto.cnds = new Cnds();
+	function Acts() {};
+	Acts.prototype.Stop = function ()
+	{
+		this.dx = 0;
+		this.dy = 0;
+	};
+	Acts.prototype.Reverse = function ()
+	{
+		this.dx *= -1;
+		this.dy *= -1;
+	};
+	Acts.prototype.SetIgnoreInput = function (ignoring)
+	{
+		this.ignoreInput = ignoring;
+	};
+	Acts.prototype.SetSpeed = function (speed)
+	{
+		if (speed < 0)
+			speed = 0;
+		if (speed > this.maxspeed)
+			speed = this.maxspeed;
+		var a = Math.atan2(this.dy, this.dx);
+		this.dx = speed * Math.cos(a);
+		this.dy = speed * Math.sin(a);
+	};
+	Acts.prototype.SetMaxSpeed = function (maxspeed)
+	{
+		this.maxspeed = maxspeed;
+		if (this.maxspeed < 0)
+			this.maxspeed = 0;
+	};
+	Acts.prototype.SetAcceleration = function (acc)
+	{
+		this.acc = acc;
+		if (this.acc < 0)
+			this.acc = 0;
+	};
+	Acts.prototype.SetDeceleration = function (dec)
+	{
+		this.dec = dec;
+		if (this.dec < 0)
+			this.dec = 0;
+	};
+	Acts.prototype.SimulateControl = function (ctrl)
+	{
+		switch (ctrl) {
+		case 0:		this.simleft = true;	break;
+		case 1:		this.simright = true;	break;
+		case 2:		this.simup = true;		break;
+		case 3:		this.simdown = true;	break;
+		}
+	};
+	Acts.prototype.SetEnabled = function (en)
+	{
+		this.enabled = (en === 1);
+	};
+	Acts.prototype.SetVectorX = function (x_)
+	{
+		this.dx = x_;
+	};
+	Acts.prototype.SetVectorY = function (y_)
+	{
+		this.dy = y_;
+	};
+	behaviorProto.acts = new Acts();
+	function Exps() {};
+	Exps.prototype.Speed = function (ret)
+	{
+		ret.set_float(Math.sqrt(this.dx * this.dx + this.dy * this.dy));
+	};
+	Exps.prototype.MaxSpeed = function (ret)
+	{
+		ret.set_float(this.maxspeed);
+	};
+	Exps.prototype.Acceleration = function (ret)
+	{
+		ret.set_float(this.acc);
+	};
+	Exps.prototype.Deceleration = function (ret)
+	{
+		ret.set_float(this.dec);
+	};
+	Exps.prototype.MovingAngle = function (ret)
+	{
+		ret.set_float(cr.to_degrees(Math.atan2(this.dy, this.dx)));
+	};
+	Exps.prototype.VectorX = function (ret)
+	{
+		ret.set_float(this.dx);
+	};
+	Exps.prototype.VectorY = function (ret)
+	{
+		ret.set_float(this.dy);
+	};
+	behaviorProto.exps = new Exps();
+}());
+;
+;
+cr.behaviors.solid = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var behaviorProto = cr.behaviors.solid.prototype;
+	behaviorProto.Type = function(behavior, objtype)
+	{
+		this.behavior = behavior;
+		this.objtype = objtype;
+		this.runtime = behavior.runtime;
+	};
+	var behtypeProto = behaviorProto.Type.prototype;
+	behtypeProto.onCreate = function()
+	{
+	};
+	behaviorProto.Instance = function(type, inst)
+	{
+		this.type = type;
+		this.behavior = type.behavior;
+		this.inst = inst;				// associated object instance to modify
+		this.runtime = type.runtime;
+	};
+	var behinstProto = behaviorProto.Instance.prototype;
+	behinstProto.onCreate = function()
+	{
+		this.inst.extra["solidEnabled"] = (this.properties[0] !== 0);
+	};
+	behinstProto.tick = function ()
+	{
+	};
+	function Cnds() {};
+	Cnds.prototype.IsEnabled = function ()
+	{
+		return this.inst.extra["solidEnabled"];
+	};
+	behaviorProto.cnds = new Cnds();
+	function Acts() {};
+	Acts.prototype.SetEnabled = function (e)
+	{
+		this.inst.extra["solidEnabled"] = !!e;
+	};
+	behaviorProto.acts = new Acts();
+}());
 cr.getProjectModel = function() { return [
 	null,
 	"Start Screen",
 	[
 	[
-		cr.plugins_.Dictionary,
+		cr.plugins_.Arr,
 		false,
 		false,
 		false,
@@ -16258,6 +18415,18 @@ cr.getProjectModel = function() { return [
 		true,
 		true,
 		true,
+		false,
+		false,
+		false,
+		false,
+		false
+	]
+,	[
+		cr.plugins_.Function,
+		true,
+		false,
+		false,
+		false,
 		false,
 		false,
 		false,
@@ -16289,19 +18458,7 @@ cr.getProjectModel = function() { return [
 		false
 	]
 ,	[
-		cr.plugins_.sliderbar,
-		false,
-		true,
-		true,
-		true,
-		false,
-		false,
-		false,
-		false,
-		false
-	]
-,	[
-		cr.plugins_.TiledBg,
+		cr.plugins_.Spritefont2,
 		false,
 		true,
 		true,
@@ -16325,6 +18482,18 @@ cr.getProjectModel = function() { return [
 		false
 	]
 ,	[
+		cr.plugins_.TiledBg,
+		false,
+		true,
+		true,
+		true,
+		true,
+		true,
+		true,
+		true,
+		true
+	]
+,	[
 		cr.plugins_.Sprite,
 		false,
 		true,
@@ -16334,6 +18503,18 @@ cr.getProjectModel = function() { return [
 		true,
 		true,
 		true,
+		false
+	]
+,	[
+		cr.plugins_.sliderbar,
+		false,
+		true,
+		true,
+		true,
+		false,
+		false,
+		false,
+		false,
 		false
 	]
 	],
@@ -16373,7 +18554,7 @@ cr.getProjectModel = function() { return [
 			false,
 			320731064580355,
 			[
-				["images/title-sheet0.png", 37921, 0, 0, 500, 212, 1, 0.5, 0.5,[],[-0.3600000143051148,-0.415094256401062,0.1079999208450317,-0.4905660450458527,0.46200031042099,-0.1792452931404114,0.4839996695518494,-0.0518869161605835,0.3340003490447998,0.4811322689056397,-0.07200014591217041,0.2924528121948242,-0.4420000016689301,0.3349056839942932,-0.4900000095367432,0.09905678033828735],0]
+				["images/title-sheet0.png", 37921, 0, 0, 500, 212, 1, 0.5, 0.5,[],[-0.3600000143051148,-0.4150943160057068,0.1079999804496765,-0.4905660450458527,0.4620000123977661,-0.1792449951171875,0.484000027179718,-0.05188700556755066,0.3339999914169312,0.4811319708824158,-0.07199999690055847,0.2924529910087585,-0.4420000016689301,0.3349059820175171,-0.4900000095367432,0.09905701875686646],0]
 			]
 			]
 		],
@@ -16815,7 +18996,7 @@ cr.getProjectModel = function() { return [
 		cr.plugins_.Sprite,
 		false,
 		[],
-		0,
+		2,
 		0,
 		null,
 		[
@@ -16828,11 +19009,21 @@ cr.getProjectModel = function() { return [
 			false,
 			8434051519318733,
 			[
-				["images/bucketsprite-sheet0.png", 3397, 0, 0, 64, 64, 1, 0.5, 0.5,[],[-0.3125,-0.3125,0,-0.375,0.3125,-0.3125,0.34375,0,0.28125,0.28125,0,0.4375,-0.28125,0.28125,-0.34375,0],0]
+				["images/bucketsprite-sheet0.png", 3397, 0, 0, 64, 64, 1, 0.5, 0.5,[],[-0.3125,-0.3125,0,-0.375,0.3125,-0.3125,0.34375,0,0.28125,0.28125,0,0.4374999403953552,-0.28125,0.28125,-0.34375,0],0]
 			]
 			]
 		],
 		[
+		[
+			"Solid",
+			cr.behaviors.solid,
+			8731301352397372
+		]
+,		[
+			"8Direction",
+			cr.behaviors.EightDir,
+			2124483778391384
+		]
 		],
 		false,
 		false,
@@ -16842,7 +19033,63 @@ cr.getProjectModel = function() { return [
 	]
 ,	[
 		"t21",
-		cr.plugins_.Dictionary,
+		cr.plugins_.Spritefont2,
+		false,
+		[],
+		1,
+		0,
+		["images/letters.png", 1427, 3],
+		null,
+		[
+		[
+			"Bullet",
+			cr.behaviors.Bullet,
+			5058417768628849
+		]
+		],
+		false,
+		false,
+		1917372732214222,
+		[],
+		null
+	]
+,	[
+		"t22",
+		cr.plugins_.Spritefont2,
+		false,
+		[],
+		0,
+		0,
+		["images/letters.png", 1427, 3],
+		null,
+		[
+		],
+		false,
+		false,
+		9406538337987392,
+		[],
+		null
+	]
+,	[
+		"t23",
+		cr.plugins_.Spritefont2,
+		false,
+		[],
+		0,
+		0,
+		["images/letters.png", 1427, 3],
+		null,
+		[
+		],
+		false,
+		false,
+		4182891015733493,
+		[],
+		null
+	]
+,	[
+		"t24",
+		cr.plugins_.Arr,
 		false,
 		[],
 		0,
@@ -16853,7 +19100,89 @@ cr.getProjectModel = function() { return [
 		],
 		true,
 		false,
-		980490675332666,
+		6733791177385511,
+		[],
+		null
+	]
+,	[
+		"t25",
+		cr.plugins_.Spritefont2,
+		false,
+		[],
+		0,
+		0,
+		["images/letters.png", 1427, 3],
+		null,
+		[
+		],
+		false,
+		false,
+		9099448562633833,
+		[],
+		null
+	]
+,	[
+		"t26",
+		cr.plugins_.Function,
+		false,
+		[],
+		0,
+		0,
+		null,
+		null,
+		[
+		],
+		false,
+		false,
+		9042119820239094,
+		[],
+		null
+		,[]
+	]
+,	[
+		"t27",
+		cr.plugins_.Spritefont2,
+		false,
+		[],
+		0,
+		0,
+		["images/letters.png", 1427, 3],
+		null,
+		[
+		],
+		false,
+		false,
+		877542387525618,
+		[],
+		null
+	]
+,	[
+		"t28",
+		cr.plugins_.Sprite,
+		false,
+		[],
+		0,
+		0,
+		null,
+		[
+			[
+			"Default",
+			5,
+			false,
+			1,
+			0,
+			false,
+			8160775441516088,
+			[
+				["images/sprite-sheet0.png", 168, 0, 0, 250, 250, 1, 0.5, 0.5,[],[],0]
+			]
+			]
+		],
+		[
+		],
+		false,
+		false,
+		1876872119984761,
 		[],
 		null
 	]
@@ -17280,7 +19609,7 @@ cr.getProjectModel = function() { return [
 		1398743863634997,
 		[
 		[
-			"Layer 0",
+			"Background",
 			0,
 			5244641341537406,
 			true,
@@ -17309,16 +19638,202 @@ cr.getProjectModel = function() { return [
 					1
 				]
 			]
-,			[
+			],
+			[			]
+		]
+,		[
+			"Game Objects",
+			1,
+			2952869412584136,
+			true,
+			[255, 255, 255],
+			true,
+			1,
+			1,
+			1,
+			false,
+			1,
+			0,
+			0,
+			[
+			[
 				[640, 657, 0, 64, 64, 0, 0, 1, 0.5, 0.5, 0, 0, []],
 				20,
 				29,
 				[
 				],
 				[
+				[
+					1
+				],
+				[
+					400,
+					600,
+					500,
+					1,
+					0,
+					1,
+					1
+				]
 				],
 				[
 					0,
+					"Default",
+					0,
+					1
+				]
+			]
+,			[
+				[245, -248, 0, 32, 32, 0, 0, 1, 0, 0, 0, 0, []],
+				21,
+				31,
+				[
+				],
+				[
+				[
+					200,
+					0,
+					0,
+					0,
+					0,
+					1
+				]
+				],
+				[
+					16,
+					16,
+					"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,;:?!-_~#\"'&()[]|`\\/@°+=*$£€<>",
+					"A",
+					2,
+					0,
+					0,
+					0,
+					0,
+					0,
+					0,
+					0
+				]
+			]
+			],
+			[			]
+		]
+,		[
+			"HUD",
+			2,
+			4188360594326985,
+			true,
+			[255, 255, 255],
+			true,
+			1,
+			1,
+			1,
+			false,
+			1,
+			0,
+			0,
+			[
+			[
+				[841, 34, 0, 731, 175, 0, 0, 1, 0, 0, 0, 0, []],
+				22,
+				32,
+				[
+				],
+				[
+				],
+				[
+					16,
+					16,
+					"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,;:?!-_~#\"'&()[]|`\\/@°+=*$£€<>",
+					"_____",
+					3,
+					0,
+					0,
+					0,
+					0,
+					0,
+					0,
+					0
+				]
+			]
+,			[
+				[841, 21, 0, 731, 92, 0, 0, 1, 0, 0, 0, 0, []],
+				23,
+				33,
+				[
+				],
+				[
+				],
+				[
+					16,
+					16,
+					"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,;:?!-_~#\"'&()[]|`\\/@°+=*$£€<>",
+					"abcdef",
+					3,
+					0,
+					0,
+					0,
+					0,
+					0,
+					0,
+					0
+				]
+			]
+,			[
+				[9, 24, 0, 731, 92, 0, 0, 1, 0, 0, 0, 0, []],
+				25,
+				35,
+				[
+				],
+				[
+				],
+				[
+					16,
+					16,
+					"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,;:?!-_~#\"'&()[]|`\\/@°+=*$£€<>",
+					"abcdef",
+					3,
+					0,
+					0,
+					0,
+					0,
+					0,
+					0,
+					0
+				]
+			]
+,			[
+				[9, 91, 0, 731, 92, 0, 0, 0.5, 0, 0, 0, 0, []],
+				27,
+				37,
+				[
+				],
+				[
+				],
+				[
+					16,
+					16,
+					"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,;:?!-_~#\"'&()[]|`\\/@°+=*$£€<>",
+					"abcdef",
+					3,
+					0,
+					0,
+					0,
+					0,
+					0,
+					0,
+					0
+				]
+			]
+,			[
+				[652, 807, 0, 1449, 250, 0, 0, 1, 0.5, 0.5, 0, 0, []],
+				28,
+				38,
+				[
+				],
+				[
+				],
+				[
+					1,
 					"Default",
 					0,
 					1
@@ -17331,13 +19846,16 @@ cr.getProjectModel = function() { return [
 		[
 			[
 				null,
-				21,
-				30,
+				24,
+				34,
 				[
 				],
 				[
 				],
 				[
+					10,
+					2,
+					1
 				]
 			]
 		],
@@ -18060,106 +20578,25 @@ cr.getProjectModel = function() { return [
 		"easySheet",
 		[
 		[
+			1,
+			"CurrentLetterPos",
 			0,
-			null,
-			false,
-			null,
-			9014690143044074,
-			[
-			[
-				16,
-				cr.plugins_.Keyboard.prototype.cnds.IsKeyDown,
-				null,
-				0,
-				false,
-				false,
-				false,
-				183310084040594,
-				false
-				,[
-				[
-					9,
-					37
-				]
-				]
-			]
-			],
-			[
-			[
-				20,
-				cr.plugins_.Sprite.prototype.acts.MoveAtAngle,
-				null,
-				3498168410461647,
-				false
-				,[
-				[
-					0,
-					[
-						0,
-						180
-					]
-				]
-,				[
-					0,
-					[
-						0,
-						4
-					]
-				]
-				]
-			]
-			]
+			0,
+false,false,399908644344785,false
 		]
 ,		[
+			1,
+			"WordIndex",
 			0,
-			null,
-			false,
-			null,
-			4549808780636709,
-			[
-			[
-				16,
-				cr.plugins_.Keyboard.prototype.cnds.IsKeyDown,
-				null,
-				0,
-				false,
-				false,
-				false,
-				4101427881202315,
-				false
-				,[
-				[
-					9,
-					39
-				]
-				]
-			]
-			],
-			[
-			[
-				20,
-				cr.plugins_.Sprite.prototype.acts.MoveAtAngle,
-				null,
-				2997213340609829,
-				false
-				,[
-				[
-					0,
-					[
-						0,
-						0
-					]
-				]
-,				[
-					0,
-					[
-						0,
-						4
-					]
-				]
-				]
-			]
-			]
+			-1,
+false,false,5289814082598835,false
+		]
+,		[
+			1,
+			"WordUp",
+			1,
+			"junk",
+false,false,3640558281439193,false
 		]
 ,		[
 			0,
@@ -18282,6 +20719,994 @@ cr.getProjectModel = function() { return [
 					]
 				]
 				]
+			]
+			]
+		]
+,		[
+			0,
+			null,
+			false,
+			null,
+			6524747064003184,
+			[
+			[
+				-1,
+				cr.system_object.prototype.cnds.Every,
+				null,
+				0,
+				false,
+				false,
+				false,
+				1540320830126004,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						5
+					]
+				]
+				]
+			]
+			],
+			[
+			]
+			,[
+			[
+				0,
+				null,
+				false,
+				null,
+				3172205040224264,
+				[
+				[
+					-1,
+					cr.system_object.prototype.cnds.CompareVar,
+					null,
+					0,
+					false,
+					false,
+					false,
+					8918800604712029,
+					false
+					,[
+					[
+						11,
+						"CurrentLetterPos"
+					]
+,					[
+						8,
+						2
+					]
+,					[
+						7,
+						[
+							19,
+							cr.system_object.prototype.exps.len
+							,[
+[
+								23,
+								"WordUp"
+							]
+							]
+						]
+					]
+					]
+				]
+				],
+				[
+				[
+					-1,
+					cr.system_object.prototype.acts.CreateObject,
+					null,
+					6661744954658049,
+					false
+					,[
+					[
+						4,
+						21
+					]
+,					[
+						5,
+						[
+							2,
+							"Game Objects"
+						]
+					]
+,					[
+						0,
+						[
+							4,
+							[
+								19,
+								cr.system_object.prototype.exps.random
+								,[
+[
+									0,
+									1200
+								]
+								]
+							]
+							,[
+								0,
+								40
+							]
+						]
+					]
+,					[
+						0,
+						[
+							0,
+							32
+						]
+					]
+					]
+				]
+,				[
+					21,
+					cr.plugins_.Spritefont2.prototype.acts.SetText,
+					null,
+					5692569392982627,
+					false
+					,[
+					[
+						7,
+						[
+							19,
+							cr.system_object.prototype.exps.mid
+							,[
+[
+								23,
+								"WordUp"
+							]
+,[
+								23,
+								"CurrentLetterPos"
+							]
+,[
+								0,
+								1
+							]
+							]
+						]
+					]
+					]
+				]
+,				[
+					21,
+					cr.behaviors.Bullet.prototype.acts.SetAngleOfMotion,
+					"Bullet",
+					1544676525989029,
+					false
+					,[
+					[
+						0,
+						[
+							0,
+							90
+						]
+					]
+					]
+				]
+				]
+			]
+			]
+		]
+,		[
+			0,
+			null,
+			false,
+			null,
+			2694506178589939,
+			[
+			[
+				-1,
+				cr.system_object.prototype.cnds.OnLayoutStart,
+				null,
+				1,
+				false,
+				false,
+				false,
+				8374877056623076,
+				false
+			]
+			],
+			[
+			[
+				24,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				1346130449112482,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						0
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						0
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"exprres"
+					]
+				]
+				]
+			]
+,			[
+				24,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				1895797023963011,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						0
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						1
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"express"
+					]
+				]
+				]
+			]
+,			[
+				24,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				2692047877123515,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						1
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						0
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"dicsionary"
+					]
+				]
+				]
+			]
+,			[
+				24,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				5158984922905027,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						1
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						1
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"dictionary"
+					]
+				]
+				]
+			]
+,			[
+				26,
+				cr.plugins_.Function.prototype.acts.CallFunction,
+				null,
+				8837153388752033,
+				false
+				,[
+				[
+					1,
+					[
+						2,
+						"GetNextWord"
+					]
+				]
+,				[
+					13,
+				]
+				]
+			]
+			]
+		]
+,		[
+			0,
+			null,
+			false,
+			null,
+			8272906328142842,
+			[
+			[
+				26,
+				cr.plugins_.Function.prototype.cnds.OnFunction,
+				null,
+				2,
+				false,
+				false,
+				false,
+				9526611444985385,
+				false
+				,[
+				[
+					1,
+					[
+						2,
+						"GetNextWord"
+					]
+				]
+				]
+			]
+			],
+			[
+			[
+				-1,
+				cr.system_object.prototype.acts.AddVar,
+				null,
+				2727508448361681,
+				false
+				,[
+				[
+					11,
+					"WordIndex"
+				]
+,				[
+					7,
+					[
+						0,
+						1
+					]
+				]
+				]
+			]
+,			[
+				25,
+				cr.plugins_.Spritefont2.prototype.acts.SetText,
+				null,
+				4173707837709517,
+				false
+				,[
+				[
+					7,
+					[
+						20,
+						24,
+						cr.plugins_.Arr.prototype.exps.At,
+						false,
+						null
+						,[
+[
+							23,
+							"WordIndex"
+						]
+,[
+							0,
+							0
+						]
+						]
+					]
+				]
+				]
+			]
+,			[
+				-1,
+				cr.system_object.prototype.acts.SetVar,
+				null,
+				9331642637836714,
+				false
+				,[
+				[
+					11,
+					"WordUp"
+				]
+,				[
+					7,
+					[
+						20,
+						24,
+						cr.plugins_.Arr.prototype.exps.At,
+						false,
+						null
+						,[
+[
+							23,
+							"WordIndex"
+						]
+,[
+							0,
+							1
+						]
+						]
+					]
+				]
+				]
+			]
+,			[
+				27,
+				cr.plugins_.Spritefont2.prototype.acts.SetText,
+				null,
+				6737495016830725,
+				false
+				,[
+				[
+					7,
+					[
+						23,
+						"WordUp"
+					]
+				]
+				]
+			]
+,			[
+				26,
+				cr.plugins_.Function.prototype.acts.CallFunction,
+				null,
+				5651770220627216,
+				false
+				,[
+				[
+					1,
+					[
+						2,
+						"BuildBlank"
+					]
+				]
+,				[
+					13,
+				]
+				]
+			]
+,			[
+				23,
+				cr.plugins_.Spritefont2.prototype.acts.SetText,
+				null,
+				6749838185062568,
+				false
+				,[
+				[
+					7,
+					[
+						2,
+						""
+					]
+				]
+				]
+			]
+,			[
+				-1,
+				cr.system_object.prototype.acts.SetVar,
+				null,
+				4139383330530686,
+				false
+				,[
+				[
+					11,
+					"CurrentLetterPos"
+				]
+,				[
+					7,
+					[
+						0,
+						0
+					]
+				]
+				]
+			]
+			]
+		]
+,		[
+			0,
+			null,
+			false,
+			null,
+			9648557589876298,
+			[
+			[
+				26,
+				cr.plugins_.Function.prototype.cnds.OnFunction,
+				null,
+				2,
+				false,
+				false,
+				false,
+				7284557511809728,
+				false
+				,[
+				[
+					1,
+					[
+						2,
+						"BuildBlank"
+					]
+				]
+				]
+			]
+			],
+			[
+			[
+				22,
+				cr.plugins_.Spritefont2.prototype.acts.SetText,
+				null,
+				8004750071474561,
+				false
+				,[
+				[
+					7,
+					[
+						2,
+						""
+					]
+				]
+				]
+			]
+			]
+			,[
+			[
+				0,
+				null,
+				false,
+				null,
+				7645424963657833,
+				[
+				[
+					-1,
+					cr.system_object.prototype.cnds.For,
+					null,
+					0,
+					true,
+					false,
+					false,
+					1348644534515754,
+					false
+					,[
+					[
+						1,
+						[
+							2,
+							""
+						]
+					]
+,					[
+						0,
+						[
+							0,
+							0
+						]
+					]
+,					[
+						0,
+						[
+							5,
+							[
+								19,
+								cr.system_object.prototype.exps.len
+								,[
+[
+									23,
+									"WordUp"
+								]
+								]
+							]
+							,[
+								0,
+								1
+							]
+						]
+					]
+					]
+				]
+				],
+				[
+				[
+					22,
+					cr.plugins_.Spritefont2.prototype.acts.AppendText,
+					null,
+					579317619276735,
+					false
+					,[
+					[
+						7,
+						[
+							2,
+							"_"
+						]
+					]
+					]
+				]
+				]
+			]
+,			[
+				0,
+				null,
+				false,
+				null,
+				7998301580925681,
+				[
+				],
+				[
+				[
+					22,
+					cr.plugins_.Spritefont2.prototype.acts.SetX,
+					null,
+					6402243573594589,
+					false
+					,[
+					[
+						0,
+						[
+							5,
+							[
+								5,
+								[
+									0,
+									1280
+								]
+								,[
+									20,
+									22,
+									cr.plugins_.Spritefont2.prototype.exps.TextWidth,
+									false,
+									null
+								]
+							]
+							,[
+								0,
+								16
+							]
+						]
+					]
+					]
+				]
+,				[
+					23,
+					cr.plugins_.Spritefont2.prototype.acts.SetX,
+					null,
+					2598331953561754,
+					false
+					,[
+					[
+						0,
+						[
+							20,
+							22,
+							cr.plugins_.Spritefont2.prototype.exps.X,
+							false,
+							null
+						]
+					]
+					]
+				]
+				]
+			]
+			]
+		]
+,		[
+			0,
+			null,
+			false,
+			null,
+			5887649404946647,
+			[
+			[
+				20,
+				cr.plugins_.Sprite.prototype.cnds.OnCollision,
+				null,
+				0,
+				false,
+				false,
+				true,
+				1444952556138904,
+				false
+				,[
+				[
+					4,
+					21
+				]
+				]
+			]
+			],
+			[
+			]
+			,[
+			[
+				0,
+				null,
+				false,
+				null,
+				9249387562258241,
+				[
+				],
+				[
+				[
+					23,
+					cr.plugins_.Spritefont2.prototype.acts.AppendText,
+					null,
+					8052078654153103,
+					false
+					,[
+					[
+						7,
+						[
+							20,
+							21,
+							cr.plugins_.Spritefont2.prototype.exps.Text,
+							true,
+							null
+						]
+					]
+					]
+				]
+,				[
+					-1,
+					cr.system_object.prototype.acts.AddVar,
+					null,
+					7828304072635613,
+					false
+					,[
+					[
+						11,
+						"CurrentLetterPos"
+					]
+,					[
+						7,
+						[
+							0,
+							1
+						]
+					]
+					]
+				]
+,				[
+					21,
+					cr.plugins_.Spritefont2.prototype.acts.Destroy,
+					null,
+					2568774279200103,
+					false
+				]
+				]
+			]
+,			[
+				0,
+				null,
+				false,
+				null,
+				2962639845911441,
+				[
+				[
+					-1,
+					cr.system_object.prototype.cnds.Compare,
+					null,
+					0,
+					false,
+					false,
+					false,
+					8596612232912949,
+					false
+					,[
+					[
+						7,
+						[
+							19,
+							cr.system_object.prototype.exps.len
+							,[
+[
+								20,
+								23,
+								cr.plugins_.Spritefont2.prototype.exps.Text,
+								true,
+								null
+							]
+							]
+						]
+					]
+,					[
+						8,
+						0
+					]
+,					[
+						7,
+						[
+							19,
+							cr.system_object.prototype.exps.len
+							,[
+[
+								23,
+								"WordUp"
+							]
+							]
+						]
+					]
+					]
+				]
+				],
+				[
+				]
+				,[
+				[
+					0,
+					null,
+					false,
+					null,
+					7331047670544085,
+					[
+					[
+						-1,
+						cr.system_object.prototype.cnds.Compare,
+						null,
+						0,
+						false,
+						false,
+						false,
+						328086109258959,
+						false
+						,[
+						[
+							7,
+							[
+								20,
+								23,
+								cr.plugins_.Spritefont2.prototype.exps.Text,
+								true,
+								null
+							]
+						]
+,						[
+							8,
+							0
+						]
+,						[
+							7,
+							[
+								23,
+								"WordUp"
+							]
+						]
+						]
+					]
+					],
+					[
+					[
+						26,
+						cr.plugins_.Function.prototype.acts.CallFunction,
+						null,
+						779491203120804,
+						false
+						,[
+						[
+							1,
+							[
+								2,
+								"GetNextWord"
+							]
+						]
+,						[
+							13,
+						]
+						]
+					]
+					]
+				]
+,				[
+					0,
+					null,
+					false,
+					null,
+					4859138466867146,
+					[
+					[
+						-1,
+						cr.system_object.prototype.cnds.Else,
+						null,
+						0,
+						false,
+						false,
+						false,
+						2248167308740803,
+						false
+					]
+					],
+					[
+					[
+						26,
+						cr.plugins_.Function.prototype.acts.CallFunction,
+						null,
+						5365261276903942,
+						false
+						,[
+						[
+							1,
+							[
+								2,
+								"GetNextWord"
+							]
+						]
+,						[
+							13,
+						]
+						]
+					]
+					]
+				]
+				]
+			]
+			]
+		]
+,		[
+			0,
+			null,
+			false,
+			null,
+			6842983647891986,
+			[
+			[
+				28,
+				cr.plugins_.Sprite.prototype.cnds.OnCollision,
+				null,
+				0,
+				false,
+				false,
+				true,
+				7072988773051451,
+				false
+				,[
+				[
+					4,
+					21
+				]
+				]
+			]
+			],
+			[
+			[
+				21,
+				cr.plugins_.Spritefont2.prototype.acts.Destroy,
+				null,
+				5980274313097179,
+				false
 			]
 			]
 		]
@@ -18432,7 +21857,7 @@ cr.getProjectModel = function() { return [
 	true,
 	0,
 	2,
-	31,
+	39,
 	true,
 	true,
 	1,
