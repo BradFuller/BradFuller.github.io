@@ -1,12 +1,10 @@
 ﻿CACHE MANIFEST
-#1414491273
+#1414910451
 index.html
 c2runtime.js
 jquery-2.0.0.min.js
-images/bg.png
 images/title-sheet0.png
 images/playbutton-sheet0.png
-images/difficultybutton-sheet0.png
 images/optionsbutton-sheet0.png
 images/easybutton-sheet0.png
 images/mediumbutton-sheet0.png
@@ -17,7 +15,10 @@ images/bg2-sheet0.png
 images/bucketsprite-sheet0.png
 images/letters.png
 images/sprite-sheet0.png
-media/ren%20and%20stimpy%20soundtrack%20-%20screw%20on%20the%20loose.ogg
+images/background.png
+images/blackbg.png
+images/csslogo-sheet0.png
+images/paintlogo-sheet0.png
 icon-16.png
 icon-32.png
 icon-114.png

@@ -21272,6 +21272,156 @@ cr.behaviors.EightDir = function(runtime)
 }());
 ;
 ;
+cr.behaviors.Fade = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var behaviorProto = cr.behaviors.Fade.prototype;
+	behaviorProto.Type = function(behavior, objtype)
+	{
+		this.behavior = behavior;
+		this.objtype = objtype;
+		this.runtime = behavior.runtime;
+	};
+	var behtypeProto = behaviorProto.Type.prototype;
+	behtypeProto.onCreate = function()
+	{
+	};
+	behaviorProto.Instance = function(type, inst)
+	{
+		this.type = type;
+		this.behavior = type.behavior;
+		this.inst = inst;				// associated object instance to modify
+		this.runtime = type.runtime;
+	};
+	var behinstProto = behaviorProto.Instance.prototype;
+	behinstProto.onCreate = function()
+	{
+		var active_at_start = this.properties[0] === 1;
+		this.fadeInTime = this.properties[1];
+		this.waitTime = this.properties[2];
+		this.fadeOutTime = this.properties[3];
+		this.destroy = this.properties[4];			// 0 = no, 1 = after fade out
+		this.stage = active_at_start ? 0 : 3;		// 0 = fade in, 1 = wait, 2 = fade out, 3 = done
+		if (this.recycled)
+			this.stageTime.reset();
+		else
+			this.stageTime = new cr.KahanAdder();
+		this.maxOpacity = (this.inst.opacity ? this.inst.opacity : 1.0);
+		if (active_at_start)
+		{
+			if (this.fadeInTime === 0)
+			{
+				this.stage = 1;
+				if (this.waitTime === 0)
+					this.stage = 2;
+			}
+			else
+			{
+				this.inst.opacity = 0;
+				this.runtime.redraw = true;
+			}
+		}
+	};
+	behinstProto.saveToJSON = function ()
+	{
+		return {
+			"fit": this.fadeInTime,
+			"wt": this.waitTime,
+			"fot": this.fadeOutTime,
+			"s": this.stage,
+			"st": this.stageTime.sum,
+			"mo": this.maxOpacity,
+		};
+	};
+	behinstProto.loadFromJSON = function (o)
+	{
+		this.fadeInTime = o["fit"];
+		this.waitTime = o["wt"];
+		this.fadeOutTime = o["fot"];
+		this.stage = o["s"];
+		this.stageTime.reset();
+		this.stageTime.sum = o["st"];
+		this.maxOpacity = o["mo"];
+	};
+	behinstProto.tick = function ()
+	{
+		this.stageTime.add(this.runtime.getDt(this.inst));
+		if (this.stage === 0)
+		{
+			this.inst.opacity = (this.stageTime.sum / this.fadeInTime) * this.maxOpacity;
+			this.runtime.redraw = true;
+			if (this.inst.opacity >= this.maxOpacity)
+			{
+				this.inst.opacity = this.maxOpacity;
+				this.stage = 1;	// wait stage
+				this.stageTime.reset();
+			}
+		}
+		if (this.stage === 1)
+		{
+			if (this.stageTime.sum >= this.waitTime)
+			{
+				this.stage = 2;	// fade out stage
+				this.stageTime.reset();
+			}
+		}
+		if (this.stage === 2)
+		{
+			if (this.fadeOutTime !== 0)
+			{
+				this.inst.opacity = this.maxOpacity - ((this.stageTime.sum / this.fadeOutTime) * this.maxOpacity);
+				this.runtime.redraw = true;
+				if (this.inst.opacity < 0)
+				{
+					this.inst.opacity = 0;
+					this.stage = 3;	// done
+					this.stageTime.reset();
+					this.runtime.trigger(cr.behaviors.Fade.prototype.cnds.OnFadeOutEnd, this.inst);
+					if (this.destroy === 1)
+						this.runtime.DestroyInstance(this.inst);
+				}
+			}
+		}
+	};
+	behinstProto.doStart = function ()
+	{
+		this.stage = 0;
+		this.stageTime.reset();
+		if (this.fadeInTime === 0)
+		{
+			this.stage = 1;
+			if (this.waitTime === 0)
+				this.stage = 2;
+		}
+		else
+		{
+			this.inst.opacity = 0;
+			this.runtime.redraw = true;
+		}
+	};
+	function Cnds() {};
+	Cnds.prototype.OnFadeOutEnd = function ()
+	{
+		return true;
+	};
+	behaviorProto.cnds = new Cnds();
+	function Acts() {};
+	Acts.prototype.StartFade = function ()
+	{
+		if (this.stage === 3)
+			this.doStart();
+	};
+	Acts.prototype.RestartFade = function ()
+	{
+		this.doStart();
+	};
+	behaviorProto.acts = new Acts();
+}());
+;
+;
 cr.behaviors.solid = function(runtime)
 {
 	this.runtime = runtime;
@@ -21319,7 +21469,7 @@ cr.behaviors.solid = function(runtime)
 }());
 cr.getProjectModel = function() { return [
 	null,
-	"Start Screen",
+	"Logo Screen",
 	[
 	[
 		cr.plugins_.Audio,
@@ -21370,18 +21520,6 @@ cr.getProjectModel = function() { return [
 		false
 	]
 ,	[
-		cr.plugins_.Mouse,
-		true,
-		false,
-		false,
-		false,
-		false,
-		false,
-		false,
-		false,
-		false
-	]
-,	[
 		cr.plugins_.Keyboard,
 		true,
 		false,
@@ -21394,28 +21532,16 @@ cr.getProjectModel = function() { return [
 		false
 	]
 ,	[
-		cr.plugins_.sliderbar,
+		cr.plugins_.Mouse,
+		true,
 		false,
-		true,
-		true,
-		true,
+		false,
+		false,
 		false,
 		false,
 		false,
 		false,
 		false
-	]
-,	[
-		cr.plugins_.TiledBg,
-		false,
-		true,
-		true,
-		true,
-		true,
-		true,
-		true,
-		true,
-		true
 	]
 ,	[
 		cr.plugins_.Sprite,
@@ -21430,7 +21556,7 @@ cr.getProjectModel = function() { return [
 		false
 	]
 ,	[
-		cr.plugins_.Spritefont2,
+		cr.plugins_.TiledBg,
 		false,
 		true,
 		true,
@@ -21453,27 +21579,34 @@ cr.getProjectModel = function() { return [
 		true,
 		false
 	]
+,	[
+		cr.plugins_.sliderbar,
+		false,
+		true,
+		true,
+		true,
+		false,
+		false,
+		false,
+		false,
+		false
+	]
+,	[
+		cr.plugins_.Spritefont2,
+		false,
+		true,
+		true,
+		true,
+		true,
+		true,
+		true,
+		true,
+		true
+	]
 	],
 	[
 	[
 		"t0",
-		cr.plugins_.TiledBg,
-		false,
-		[],
-		0,
-		0,
-		["images/bg.png", 182, 1],
-		null,
-		[
-		],
-		false,
-		true,
-		6024413261152257,
-		[],
-		null
-	]
-,	[
-		"t1",
 		cr.plugins_.Sprite,
 		false,
 		[],
@@ -21497,13 +21630,13 @@ cr.getProjectModel = function() { return [
 		[
 		],
 		false,
-		true,
+		false,
 		5697349864674374,
 		[],
 		null
 	]
 ,	[
-		"t2",
+		"t1",
 		cr.plugins_.Sprite,
 		false,
 		[],
@@ -21527,43 +21660,13 @@ cr.getProjectModel = function() { return [
 		[
 		],
 		false,
-		true,
+		false,
 		4326803497043808,
 		[],
 		null
 	]
 ,	[
-		"t3",
-		cr.plugins_.Sprite,
-		false,
-		[],
-		0,
-		0,
-		null,
-		[
-			[
-			"Default",
-			5,
-			false,
-			1,
-			0,
-			false,
-			2854042538291961,
-			[
-				["images/difficultybutton-sheet0.png", 1780, 0, 0, 500, 100, 1, 0.5, 0.5,[],[-0.4939999878406525,-0.4699999988079071,0,-0.5,0.4940000176429749,-0.4699999988079071,0.4940000176429749,0.4700000286102295,0,0.5,-0.4939999878406525,0.4700000286102295],0]
-			]
-			]
-		],
-		[
-		],
-		false,
-		true,
-		3258900233668833,
-		[],
-		null
-	]
-,	[
-		"t4",
+		"t2",
 		cr.plugins_.Sprite,
 		false,
 		[],
@@ -21587,13 +21690,13 @@ cr.getProjectModel = function() { return [
 		[
 		],
 		false,
-		true,
+		false,
 		5816887834538777,
 		[],
 		null
 	]
 ,	[
-		"t5",
+		"t3",
 		cr.plugins_.Mouse,
 		false,
 		[],
@@ -21611,7 +21714,7 @@ cr.getProjectModel = function() { return [
 		,[]
 	]
 ,	[
-		"t6",
+		"t4",
 		cr.plugins_.Text,
 		false,
 		[],
@@ -21628,7 +21731,7 @@ cr.getProjectModel = function() { return [
 		null
 	]
 ,	[
-		"t7",
+		"t5",
 		cr.plugins_.Sprite,
 		false,
 		[],
@@ -21658,7 +21761,7 @@ cr.getProjectModel = function() { return [
 		null
 	]
 ,	[
-		"t8",
+		"t6",
 		cr.plugins_.Sprite,
 		false,
 		[],
@@ -21688,7 +21791,7 @@ cr.getProjectModel = function() { return [
 		null
 	]
 ,	[
-		"t9",
+		"t7",
 		cr.plugins_.Sprite,
 		false,
 		[],
@@ -21718,7 +21821,7 @@ cr.getProjectModel = function() { return [
 		null
 	]
 ,	[
-		"t10",
+		"t8",
 		cr.plugins_.Sprite,
 		false,
 		[],
@@ -21748,7 +21851,7 @@ cr.getProjectModel = function() { return [
 		null
 	]
 ,	[
-		"t11",
+		"t9",
 		cr.plugins_.sliderbar,
 		false,
 		[],
@@ -21765,7 +21868,7 @@ cr.getProjectModel = function() { return [
 		null
 	]
 ,	[
-		"t12",
+		"t10",
 		cr.plugins_.Text,
 		false,
 		[],
@@ -21782,7 +21885,7 @@ cr.getProjectModel = function() { return [
 		null
 	]
 ,	[
-		"t13",
+		"t11",
 		cr.plugins_.Text,
 		false,
 		[],
@@ -21799,7 +21902,7 @@ cr.getProjectModel = function() { return [
 		null
 	]
 ,	[
-		"t14",
+		"t12",
 		cr.plugins_.sliderbar,
 		false,
 		[],
@@ -21816,7 +21919,7 @@ cr.getProjectModel = function() { return [
 		null
 	]
 ,	[
-		"t15",
+		"t13",
 		cr.plugins_.Sprite,
 		false,
 		[],
@@ -21846,7 +21949,7 @@ cr.getProjectModel = function() { return [
 		null
 	]
 ,	[
-		"t16",
+		"t14",
 		cr.plugins_.Keyboard,
 		false,
 		[],
@@ -21864,7 +21967,7 @@ cr.getProjectModel = function() { return [
 		,[]
 	]
 ,	[
-		"t17",
+		"t15",
 		cr.plugins_.Text,
 		false,
 		[],
@@ -21881,7 +21984,7 @@ cr.getProjectModel = function() { return [
 		null
 	]
 ,	[
-		"t18",
+		"t16",
 		cr.plugins_.Button,
 		false,
 		[],
@@ -21898,7 +22001,7 @@ cr.getProjectModel = function() { return [
 		null
 	]
 ,	[
-		"t19",
+		"t17",
 		cr.plugins_.Sprite,
 		false,
 		[],
@@ -21928,7 +22031,7 @@ cr.getProjectModel = function() { return [
 		null
 	]
 ,	[
-		"t20",
+		"t18",
 		cr.plugins_.Sprite,
 		false,
 		[],
@@ -21968,7 +22071,7 @@ cr.getProjectModel = function() { return [
 		null
 	]
 ,	[
-		"t21",
+		"t19",
 		cr.plugins_.Spritefont2,
 		false,
 		[],
@@ -21990,7 +22093,7 @@ cr.getProjectModel = function() { return [
 		null
 	]
 ,	[
-		"t22",
+		"t20",
 		cr.plugins_.Spritefont2,
 		false,
 		[],
@@ -22007,7 +22110,7 @@ cr.getProjectModel = function() { return [
 		null
 	]
 ,	[
-		"t23",
+		"t21",
 		cr.plugins_.Spritefont2,
 		false,
 		[],
@@ -22024,7 +22127,7 @@ cr.getProjectModel = function() { return [
 		null
 	]
 ,	[
-		"t24",
+		"t22",
 		cr.plugins_.Arr,
 		false,
 		[],
@@ -22041,7 +22144,7 @@ cr.getProjectModel = function() { return [
 		null
 	]
 ,	[
-		"t25",
+		"t23",
 		cr.plugins_.Spritefont2,
 		false,
 		[],
@@ -22058,7 +22161,7 @@ cr.getProjectModel = function() { return [
 		null
 	]
 ,	[
-		"t26",
+		"t24",
 		cr.plugins_.Function,
 		false,
 		[],
@@ -22076,7 +22179,7 @@ cr.getProjectModel = function() { return [
 		,[]
 	]
 ,	[
-		"t27",
+		"t25",
 		cr.plugins_.Spritefont2,
 		false,
 		[],
@@ -22093,7 +22196,7 @@ cr.getProjectModel = function() { return [
 		null
 	]
 ,	[
-		"t28",
+		"t26",
 		cr.plugins_.Sprite,
 		false,
 		[],
@@ -22123,7 +22226,7 @@ cr.getProjectModel = function() { return [
 		null
 	]
 ,	[
-		"t29",
+		"t27",
 		cr.plugins_.Audio,
 		false,
 		[],
@@ -22140,11 +22243,225 @@ cr.getProjectModel = function() { return [
 		null
 		,[0,0,1,1,1,600,600,10000,1,5000,1]
 	]
+,	[
+		"t28",
+		cr.plugins_.TiledBg,
+		false,
+		[],
+		0,
+		0,
+		["images/background.png", 30865, 1],
+		null,
+		[
+		],
+		false,
+		false,
+		6413205072203151,
+		[],
+		null
+	]
+,	[
+		"t29",
+		cr.plugins_.TiledBg,
+		false,
+		[],
+		0,
+		0,
+		["images/blackbg.png", 992, 4],
+		null,
+		[
+		],
+		false,
+		true,
+		3569967844651285,
+		[],
+		null
+	]
+,	[
+		"t30",
+		cr.plugins_.TiledBg,
+		false,
+		[],
+		1,
+		0,
+		["images/blackbg.png", 992, 4],
+		null,
+		[
+		[
+			"Fade",
+			cr.behaviors.Fade,
+			4670477611750054
+		]
+		],
+		false,
+		false,
+		7983384140305105,
+		[],
+		null
+	]
+,	[
+		"t31",
+		cr.plugins_.Sprite,
+		false,
+		[],
+		1,
+		0,
+		null,
+		[
+			[
+			"Default",
+			5,
+			false,
+			1,
+			0,
+			false,
+			7591245098997843,
+			[
+				["images/csslogo-sheet0.png", 2242, 0, 0, 174, 115, 1, 0.5, 0.5043478012084961,[],[-0.4022988677024841,-0.3565217256546021,0,-0.4695651829242706,0.4022988677024841,-0.3565217256546021,0.4252873659133911,-0.008695632219314575,0.3333333134651184,0.2434782981872559,0,0.4956521987915039,-0.3333333134651184,0.2434782981872559,-0.4252873659133911,-0.008695632219314575],0]
+			]
+			]
+		],
+		[
+		[
+			"Fade",
+			cr.behaviors.Fade,
+			5097922060576384
+		]
+		],
+		false,
+		true,
+		1288503995336444,
+		[],
+		null
+	]
+,	[
+		"t32",
+		cr.plugins_.Sprite,
+		false,
+		[],
+		1,
+		0,
+		null,
+		[
+			[
+			"Default",
+			5,
+			false,
+			1,
+			0,
+			false,
+			2256244579227348,
+			[
+				["images/paintlogo-sheet0.png", 33616, 0, 0, 506, 146, 1, 0.5, 0.5,[],[-0.4249011874198914,-0.2397260367870331,0.3853754997253418,-0.1027397215366364,0.47826087474823,0,0.3853754997253418,0.1027397513389587,-0.4367588758468628,0.2808219194412231,-0.4881422817707062,0],0]
+			]
+			]
+		],
+		[
+		[
+			"Fade",
+			cr.behaviors.Fade,
+			1471942322277975
+		]
+		],
+		false,
+		true,
+		2499213312246149,
+		[],
+		null
+	]
 	],
 	[
 	],
 	[
 	[
+		"Logo Screen",
+		1708,
+		960,
+		false,
+		"LogoSheet",
+		6245749427298207,
+		[
+		[
+			"Layer 0",
+			0,
+			2183350483376862,
+			true,
+			[255, 255, 255],
+			false,
+			1,
+			1,
+			1,
+			false,
+			1,
+			0,
+			0,
+			[
+			[
+				[0, 0, 0, 1280, 720, 0, 0, 1, 0, 0, 0, 0, []],
+				29,
+				3,
+				[
+				],
+				[
+				],
+				[
+					0,
+					0
+				]
+			]
+,			[
+				[640, 360.8320007324219, 0, 289.5317993164063, 191.3572235107422, 0, 0, 1, 0.5, 0.5043478012084961, 0, 0, []],
+				31,
+				6,
+				[
+				],
+				[
+				[
+					1,
+					2,
+					1,
+					2,
+					1
+				]
+				],
+				[
+					0,
+					"Default",
+					0,
+					1
+				]
+			]
+,			[
+				[640, 360, 0, 506, 146, 0, 0, 0, 0.5, 0.5, 0, 0, []],
+				32,
+				7,
+				[
+				],
+				[
+				[
+					0,
+					2,
+					1,
+					2,
+					1
+				]
+				],
+				[
+					0,
+					"Default",
+					0,
+					1
+				]
+			]
+			],
+			[			]
+		]
+		],
+		[
+		],
+		[]
+	]
+,	[
 		"Start Screen",
 		1280,
 		720,
@@ -22168,8 +22485,8 @@ cr.getProjectModel = function() { return [
 			0,
 			[
 			[
-				[0, 0, 0, 1280, 720, 0, 0, 1, 0, 0, 0, 0, []],
-				0,
+				[0, 0, 0, 4320, 720, 0, 0, 1, 0, 0, 0, 0, []],
+				28,
 				0,
 				[
 				],
@@ -22182,7 +22499,7 @@ cr.getProjectModel = function() { return [
 			]
 ,			[
 				[640, 167, 0, 500, 212, 0, 0, 1, 0.5, 0.5, 0, 0, []],
-				1,
+				0,
 				1,
 				[
 				],
@@ -22197,97 +22514,8 @@ cr.getProjectModel = function() { return [
 			]
 ,			[
 				[640, 356, 0, 500, 100, 0, 0, 1, 0.5, 0.5, 0, 0, []],
-				2,
-				2,
-				[
-				],
-				[
-				],
-				[
-					0,
-					"Default",
-					0,
-					1
-				]
-			]
-,			[
-				[640, 466, 0, 500, 100, 0, 0, 1, 0.5, 0.5, 0, 0, []],
-				3,
-				3,
-				[
-				],
-				[
-				],
-				[
-					0,
-					"Default",
-					0,
-					1
-				]
-			]
-,			[
-				[640, 578, 0, 500, 100, 0, 0, 1, 0.5, 0.5, 0, 0, []],
-				4,
-				4,
-				[
-				],
-				[
-				],
-				[
-					0,
-					"Default",
-					0,
-					1
-				]
-			]
-			],
-			[			]
-		]
-		],
-		[
-		],
-		[]
-	]
-,	[
-		"Difficulty Screen",
-		1280,
-		720,
-		false,
-		"difficultySheet",
-		687319583434481,
-		[
-		[
-			"Layer 0",
-			0,
-			8586967251002945,
-			true,
-			[255, 255, 255],
-			false,
-			1,
-			1,
-			1,
-			false,
-			1,
-			0,
-			0,
-			[
-			[
-				[0, 0, 0, 1280, 720, 0, 0, 1, 0, 0, 0, 0, []],
-				0,
-				6,
-				[
-				],
-				[
-				],
-				[
-					0,
-					0
-				]
-			]
-,			[
-				[420, 155, 0, 500, 212, 0, 0, 1, 0.5, 0.5, 0, 0, []],
 				1,
-				7,
+				2,
 				[
 				],
 				[
@@ -22300,83 +22528,38 @@ cr.getProjectModel = function() { return [
 				]
 			]
 ,			[
-				[637, 85, 0, 479, 158, 0, 0, 1, 0, 0, 0, 0, []],
-				6,
+				[640, 461, 0, 500, 100, 0, 0, 1, 0.5, 0.5, 0, 0, []],
+				2,
+				4,
+				[
+				],
+				[
+				],
+				[
+					0,
+					"Default",
+					0,
+					1
+				]
+			]
+,			[
+				[0, 0, 0, 1280, 720, 0, 0, 1, 0, 0, 0, 0, []],
+				30,
 				8,
 				[
 				],
 				[
+				[
+					1,
+					0,
+					0,
+					3,
+					1
+				]
 				],
 				[
-					"Difficulty",
-					0,
-					"72pt Arial",
-					"rgb(255,255,255)",
-					1,
-					1,
-					0,
 					0,
 					0
-				]
-			]
-,			[
-				[640, 316, 0, 500, 100, 0, 0, 1, 0.5, 0.5, 0, 0, []],
-				7,
-				9,
-				[
-				],
-				[
-				],
-				[
-					0,
-					"Default",
-					0,
-					1
-				]
-			]
-,			[
-				[640, 416, 0, 500, 100, 0, 0, 1, 0.5, 0.5, 0, 0, []],
-				8,
-				10,
-				[
-				],
-				[
-				],
-				[
-					0,
-					"Default",
-					0,
-					1
-				]
-			]
-,			[
-				[640, 517, 0, 500, 100, 0, 0, 1, 0.5, 0.5, 0, 0, []],
-				9,
-				11,
-				[
-				],
-				[
-				],
-				[
-					0,
-					"Default",
-					0,
-					1
-				]
-			]
-,			[
-				[640, 641, 0, 500, 100, 0, 0, 1, 0.5, 0.5, 0, 0, []],
-				10,
-				12,
-				[
-				],
-				[
-				],
-				[
-					0,
-					"Default",
-					0,
-					1
 				]
 			]
 			],
@@ -22411,21 +22594,8 @@ cr.getProjectModel = function() { return [
 			0,
 			[
 			[
-				[0, 0, 0, 1280, 720, 0, 0, 1, 0, 0, 0, 0, []],
-				0,
-				13,
-				[
-				],
-				[
-				],
-				[
-					0,
-					0
-				]
-			]
-,			[
 				[640, 125, 0, 500, 212, 0, 0, 1, 0.5, 0.5, 0, 0, []],
-				1,
+				0,
 				14,
 				[
 				],
@@ -22440,7 +22610,7 @@ cr.getProjectModel = function() { return [
 			]
 ,			[
 				[444.5, 278, 0, 391, 30, 0, 0, 1, 0, 0, 0, 0, []],
-				11,
+				9,
 				15,
 				[
 				],
@@ -22459,7 +22629,7 @@ cr.getProjectModel = function() { return [
 			]
 ,			[
 				[540, 238, 0, 200, 41, 0, 0, 1, 0, 0, 0, 0, []],
-				12,
+				10,
 				16,
 				[
 				],
@@ -22479,7 +22649,7 @@ cr.getProjectModel = function() { return [
 			]
 ,			[
 				[540, 321, 0, 200, 41, 0, 0, 1, 0, 0, 0, 0, []],
-				13,
+				11,
 				17,
 				[
 				],
@@ -22499,7 +22669,7 @@ cr.getProjectModel = function() { return [
 			]
 ,			[
 				[444.5, 363, 0, 391, 30, 0, 0, 1, 0, 0, 0, 0, []],
-				14,
+				12,
 				18,
 				[
 				],
@@ -22518,7 +22688,7 @@ cr.getProjectModel = function() { return [
 			]
 ,			[
 				[640, 462, 0, 250, 50, 0, 0, 1, 0.5, 0.5, 0, 0, []],
-				15,
+				13,
 				19,
 				[
 				],
@@ -22533,7 +22703,7 @@ cr.getProjectModel = function() { return [
 			]
 ,			[
 				[640, 572, 0, 500, 100, 0, 0, 1, 0.5, 0.5, 0, 0, []],
-				10,
+				8,
 				20,
 				[
 				],
@@ -22555,7 +22725,7 @@ cr.getProjectModel = function() { return [
 		[]
 	]
 ,	[
-		"Game - Easy Screen",
+		"Game Screen",
 		1280,
 		720,
 		false,
@@ -22579,7 +22749,7 @@ cr.getProjectModel = function() { return [
 			[
 			[
 				[641.8251953125, 362.5576171875, 0, 1280, 720, 0, 0, 1, 0.5014326572418213, 0.5018587112426758, 0, 0, [[1], [1]]],
-				19,
+				17,
 				28,
 				[
 				],
@@ -22612,7 +22782,7 @@ cr.getProjectModel = function() { return [
 			[
 			[
 				[640, 657, 0, 64, 64, 0, 0, 1, 0.5, 0.5, 0, 0, []],
-				20,
+				18,
 				29,
 				[
 				],
@@ -22639,7 +22809,7 @@ cr.getProjectModel = function() { return [
 			]
 ,			[
 				[245, -248, 0, 32, 32, 0, 0, 1, 0, 0, 0, 0, []],
-				21,
+				19,
 				31,
 				[
 				],
@@ -22688,7 +22858,7 @@ cr.getProjectModel = function() { return [
 			[
 			[
 				[841, 34, 0, 731, 175, 0, 0, 1, 0, 0, 0, 0, []],
-				22,
+				20,
 				32,
 				[
 				],
@@ -22711,7 +22881,7 @@ cr.getProjectModel = function() { return [
 			]
 ,			[
 				[841, 21, 0, 731, 92, 0, 0, 1, 0, 0, 0, 0, []],
-				23,
+				21,
 				33,
 				[
 				],
@@ -22734,7 +22904,7 @@ cr.getProjectModel = function() { return [
 			]
 ,			[
 				[9, 24, 0, 731, 92, 0, 0, 1, 0, 0, 0, 0, []],
-				25,
+				23,
 				35,
 				[
 				],
@@ -22757,7 +22927,7 @@ cr.getProjectModel = function() { return [
 			]
 ,			[
 				[9, 91, 0, 731, 92, 0, 0, 0.5, 0, 0, 0, 0, []],
-				27,
+				25,
 				37,
 				[
 				],
@@ -22780,7 +22950,7 @@ cr.getProjectModel = function() { return [
 			]
 ,			[
 				[649, 839, 0, 1449, 250, 0, 0, 1, 0.5, 0.5, 0, 0, []],
-				28,
+				26,
 				38,
 				[
 				],
@@ -22800,7 +22970,7 @@ cr.getProjectModel = function() { return [
 		[
 			[
 				null,
-				24,
+				22,
 				34,
 				[
 				],
@@ -22812,68 +22982,6 @@ cr.getProjectModel = function() { return [
 					1
 				]
 			]
-		],
-		[]
-	]
-,	[
-		"Game - Medium Screen",
-		1708,
-		960,
-		false,
-		"mediumSheet",
-		9248559278923622,
-		[
-		[
-			"Layer 0",
-			0,
-			7203512211297655,
-			true,
-			[255, 255, 255],
-			false,
-			1,
-			1,
-			1,
-			false,
-			1,
-			0,
-			0,
-			[
-			],
-			[			]
-		]
-		],
-		[
-		],
-		[]
-	]
-,	[
-		"Game - Hard Screen",
-		1708,
-		960,
-		false,
-		"hardSheet",
-		1214026314074238,
-		[
-		[
-			"Layer 0",
-			0,
-			3783659208195555,
-			true,
-			[255, 255, 255],
-			false,
-			1,
-			1,
-			1,
-			false,
-			1,
-			0,
-			0,
-			[
-			],
-			[			]
-		]
-		],
-		[
 		],
 		[]
 	]
@@ -22901,21 +23009,8 @@ cr.getProjectModel = function() { return [
 			0,
 			[
 			[
-				[0, 0, 0, 1280, 720, 0, 0, 1, 0, 0, 0, 0, []],
-				0,
-				21,
-				[
-				],
-				[
-				],
-				[
-					0,
-					0
-				]
-			]
-,			[
 				[640, 173, 0, 500, 212, 0, 0, 1, 0.5, 0.5, 0, 0, []],
-				1,
+				0,
 				22,
 				[
 				],
@@ -22930,7 +23025,7 @@ cr.getProjectModel = function() { return [
 			]
 ,			[
 				[422, 303, 0, 436, 176, 0, 0, 1, 0, 0, 0, 0, []],
-				17,
+				15,
 				24,
 				[
 				],
@@ -22950,7 +23045,7 @@ cr.getProjectModel = function() { return [
 			]
 ,			[
 				[640, 595, 0, 500, 100, 0, 0, 1, 0.5, 0.5, 0, 0, []],
-				10,
+				8,
 				25,
 				[
 				],
@@ -22995,21 +23090,8 @@ cr.getProjectModel = function() { return [
 			0,
 			[
 			[
-				[0, 0, 0, 1280, 720, 0, 0, 1, 0, 0, 0, 0, []],
-				0,
-				26,
-				[
-				],
-				[
-				],
-				[
-					0,
-					0
-				]
-			]
-,			[
 				[574, 250, 0, 132, 24, 0, 0, 1, 0, 0, 0, 0, []],
-				18,
+				16,
 				27,
 				[
 				],
@@ -23047,7 +23129,7 @@ cr.getProjectModel = function() { return [
 			5590522454183696,
 			[
 			[
-				5,
+				3,
 				cr.plugins_.Mouse.prototype.cnds.OnObjectClicked,
 				null,
 				1,
@@ -23067,7 +23149,7 @@ cr.getProjectModel = function() { return [
 				]
 ,				[
 					4,
-					2
+					1
 				]
 				]
 			]
@@ -23077,61 +23159,12 @@ cr.getProjectModel = function() { return [
 				-1,
 				cr.system_object.prototype.acts.GoToLayout,
 				null,
-				8420124379840352,
+				9190036534300103,
 				false
 				,[
 				[
 					6,
-					"Difficulty Screen"
-				]
-				]
-			]
-			]
-		]
-,		[
-			0,
-			null,
-			false,
-			null,
-			219750923739385,
-			[
-			[
-				5,
-				cr.plugins_.Mouse.prototype.cnds.OnObjectClicked,
-				null,
-				1,
-				false,
-				false,
-				false,
-				8698444574844535,
-				false
-				,[
-				[
-					3,
-					0
-				]
-,				[
-					3,
-					0
-				]
-,				[
-					4,
-					3
-				]
-				]
-			]
-			],
-			[
-			[
-				-1,
-				cr.system_object.prototype.acts.GoToLayout,
-				null,
-				4393155830968464,
-				false
-				,[
-				[
-					6,
-					"Difficulty Screen"
+					"Game Screen"
 				]
 				]
 			]
@@ -23145,7 +23178,7 @@ cr.getProjectModel = function() { return [
 			747494145718527,
 			[
 			[
-				5,
+				3,
 				cr.plugins_.Mouse.prototype.cnds.OnObjectClicked,
 				null,
 				1,
@@ -23165,7 +23198,7 @@ cr.getProjectModel = function() { return [
 				]
 ,				[
 					4,
-					4
+					2
 				]
 				]
 			]
@@ -23180,7 +23213,7 @@ cr.getProjectModel = function() { return [
 				,[
 				[
 					6,
-					"Option Screen"
+					"Game Screen"
 				]
 				]
 			]
@@ -23191,73 +23224,90 @@ cr.getProjectModel = function() { return [
 			null,
 			false,
 			null,
-			5467151763138214,
-			[
-			[
-				5,
-				cr.plugins_.Mouse.prototype.cnds.OnObjectClicked,
-				null,
-				1,
-				false,
-				false,
-				false,
-				9263263994138711,
-				false
-				,[
-				[
-					3,
-					2
-				]
-,				[
-					3,
-					1
-				]
-,				[
-					4,
-					1
-				]
-				]
-			]
-			],
-			[
-			]
-		]
-,		[
-			0,
-			null,
-			false,
-			null,
-			2184285730334665,
+			3375671083848906,
 			[
 			[
 				-1,
-				cr.system_object.prototype.cnds.OnLayoutStart,
+				cr.system_object.prototype.cnds.EveryTick,
 				null,
-				1,
+				0,
 				false,
 				false,
 				false,
-				4297897335417293,
+				102867131904493,
 				false
 			]
 			],
 			[
 			[
-				29,
-				cr.plugins_.Audio.prototype.acts.Play,
+				28,
+				cr.plugins_.TiledBg.prototype.acts.SetX,
 				null,
-				1077401399175195,
+				2538066124791975,
 				false
 				,[
 				[
-					2,
-					["ren and stimpy soundtrack - screw on the loose",false]
+					0,
+					[
+						5,
+						[
+							20,
+							28,
+							cr.plugins_.TiledBg.prototype.exps.X,
+							false,
+							null
+						]
+						,[
+							0,
+							2
+						]
+					]
+				]
+				]
+			]
+			]
+		]
+,		[
+			0,
+			null,
+			false,
+			null,
+			3933590270617493,
+			[
+			[
+				28,
+				cr.plugins_.TiledBg.prototype.cnds.CompareX,
+				null,
+				0,
+				false,
+				false,
+				false,
+				1118811069627761,
+				false
+				,[
+				[
+					8,
+					3
 				]
 ,				[
-					3,
-					1
+					0,
+					[
+						0,
+						-3024
+					]
 				]
-,				[
+				]
+			]
+			],
+			[
+			[
+				28,
+				cr.plugins_.TiledBg.prototype.acts.SetPos,
+				null,
+				9632265411383615,
+				false
+				,[
+				[
 					0,
 					[
 						0,
@@ -23265,10 +23315,10 @@ cr.getProjectModel = function() { return [
 					]
 				]
 ,				[
-					1,
+					0,
 					[
-						2,
-						"paint"
+						0,
+						0
 					]
 				]
 				]
@@ -23288,7 +23338,7 @@ cr.getProjectModel = function() { return [
 			3882882621863702,
 			[
 			[
-				5,
+				3,
 				cr.plugins_.Mouse.prototype.cnds.OnObjectClicked,
 				null,
 				1,
@@ -23308,7 +23358,7 @@ cr.getProjectModel = function() { return [
 				]
 ,				[
 					4,
-					15
+					13
 				]
 				]
 			]
@@ -23337,7 +23387,7 @@ cr.getProjectModel = function() { return [
 			4616336362387449,
 			[
 			[
-				5,
+				3,
 				cr.plugins_.Mouse.prototype.cnds.OnObjectClicked,
 				null,
 				1,
@@ -23357,7 +23407,7 @@ cr.getProjectModel = function() { return [
 				]
 ,				[
 					4,
-					10
+					8
 				]
 				]
 			]
@@ -23391,7 +23441,7 @@ cr.getProjectModel = function() { return [
 			6509497690992454,
 			[
 			[
-				5,
+				3,
 				cr.plugins_.Mouse.prototype.cnds.OnObjectClicked,
 				null,
 				1,
@@ -23411,7 +23461,7 @@ cr.getProjectModel = function() { return [
 				]
 ,				[
 					4,
-					7
+					5
 				]
 				]
 			]
@@ -23426,7 +23476,7 @@ cr.getProjectModel = function() { return [
 				,[
 				[
 					6,
-					"Game - Easy Screen"
+					"Game Screen"
 				]
 				]
 			]
@@ -23440,7 +23490,7 @@ cr.getProjectModel = function() { return [
 			7943012487303121,
 			[
 			[
-				5,
+				3,
 				cr.plugins_.Mouse.prototype.cnds.OnObjectClicked,
 				null,
 				1,
@@ -23460,25 +23510,12 @@ cr.getProjectModel = function() { return [
 				]
 ,				[
 					4,
-					8
+					6
 				]
 				]
 			]
 			],
 			[
-			[
-				-1,
-				cr.system_object.prototype.acts.GoToLayout,
-				null,
-				8687420976188051,
-				false
-				,[
-				[
-					6,
-					"Game - Medium Screen"
-				]
-				]
-			]
 			]
 		]
 ,		[
@@ -23489,7 +23526,7 @@ cr.getProjectModel = function() { return [
 			9441828823953928,
 			[
 			[
-				5,
+				3,
 				cr.plugins_.Mouse.prototype.cnds.OnObjectClicked,
 				null,
 				1,
@@ -23509,25 +23546,12 @@ cr.getProjectModel = function() { return [
 				]
 ,				[
 					4,
-					9
+					7
 				]
 				]
 			]
 			],
 			[
-			[
-				-1,
-				cr.system_object.prototype.acts.GoToLayout,
-				null,
-				7098454715287202,
-				false
-				,[
-				[
-					6,
-					"Game - Hard Screen"
-				]
-				]
-			]
 			]
 		]
 ,		[
@@ -23538,7 +23562,7 @@ cr.getProjectModel = function() { return [
 			5859528460704566,
 			[
 			[
-				5,
+				3,
 				cr.plugins_.Mouse.prototype.cnds.OnObjectClicked,
 				null,
 				1,
@@ -23558,7 +23582,7 @@ cr.getProjectModel = function() { return [
 				]
 ,				[
 					4,
-					10
+					8
 				]
 				]
 			]
@@ -23613,7 +23637,7 @@ false,false,3640558281439193,false
 			1773541676804654,
 			[
 			[
-				20,
+				18,
 				cr.plugins_.Sprite.prototype.cnds.IsOutsideLayout,
 				null,
 				0,
@@ -23624,7 +23648,7 @@ false,false,3640558281439193,false
 				false
 			]
 ,			[
-				16,
+				14,
 				cr.plugins_.Keyboard.prototype.cnds.IsKeyDown,
 				null,
 				0,
@@ -23643,7 +23667,7 @@ false,false,3640558281439193,false
 			],
 			[
 			[
-				20,
+				18,
 				cr.plugins_.Sprite.prototype.acts.SetPos,
 				null,
 				6403750630447031,
@@ -23675,7 +23699,7 @@ false,false,3640558281439193,false
 			9942491285602352,
 			[
 			[
-				20,
+				18,
 				cr.plugins_.Sprite.prototype.cnds.IsOutsideLayout,
 				null,
 				0,
@@ -23686,7 +23710,7 @@ false,false,3640558281439193,false
 				false
 			]
 ,			[
-				16,
+				14,
 				cr.plugins_.Keyboard.prototype.cnds.IsKeyDown,
 				null,
 				0,
@@ -23705,7 +23729,7 @@ false,false,3640558281439193,false
 			],
 			[
 			[
-				20,
+				18,
 				cr.plugins_.Sprite.prototype.acts.SetPos,
 				null,
 				5341409588826985,
@@ -23812,7 +23836,7 @@ false,false,3640558281439193,false
 					,[
 					[
 						4,
-						21
+						19
 					]
 ,					[
 						5,
@@ -23851,7 +23875,7 @@ false,false,3640558281439193,false
 					]
 				]
 ,				[
-					21,
+					19,
 					cr.plugins_.Spritefont2.prototype.acts.SetText,
 					null,
 					5692569392982627,
@@ -23881,7 +23905,7 @@ false,false,3640558281439193,false
 					]
 				]
 ,				[
-					21,
+					19,
 					cr.behaviors.Bullet.prototype.acts.SetAngleOfMotion,
 					"Bullet",
 					1544676525989029,
@@ -23921,7 +23945,7 @@ false,false,3640558281439193,false
 			],
 			[
 			[
-				24,
+				22,
 				cr.plugins_.Arr.prototype.acts.SetXY,
 				null,
 				1346130449112482,
@@ -23951,7 +23975,7 @@ false,false,3640558281439193,false
 				]
 			]
 ,			[
-				24,
+				22,
 				cr.plugins_.Arr.prototype.acts.SetXY,
 				null,
 				1895797023963011,
@@ -23981,7 +24005,7 @@ false,false,3640558281439193,false
 				]
 			]
 ,			[
-				24,
+				22,
 				cr.plugins_.Arr.prototype.acts.SetXY,
 				null,
 				2692047877123515,
@@ -24011,7 +24035,7 @@ false,false,3640558281439193,false
 				]
 			]
 ,			[
-				24,
+				22,
 				cr.plugins_.Arr.prototype.acts.SetXY,
 				null,
 				5158984922905027,
@@ -24041,7 +24065,7 @@ false,false,3640558281439193,false
 				]
 			]
 ,			[
-				24,
+				22,
 				cr.plugins_.Arr.prototype.acts.SetXY,
 				null,
 				343775330469459,
@@ -24071,7 +24095,7 @@ false,false,3640558281439193,false
 				]
 			]
 ,			[
-				24,
+				22,
 				cr.plugins_.Arr.prototype.acts.SetXY,
 				null,
 				3888896475129987,
@@ -24101,7 +24125,7 @@ false,false,3640558281439193,false
 				]
 			]
 ,			[
-				26,
+				24,
 				cr.plugins_.Function.prototype.acts.CallFunction,
 				null,
 				8837153388752033,
@@ -24129,7 +24153,7 @@ false,false,3640558281439193,false
 			8272906328142842,
 			[
 			[
-				26,
+				24,
 				cr.plugins_.Function.prototype.cnds.OnFunction,
 				null,
 				2,
@@ -24171,7 +24195,7 @@ false,false,3640558281439193,false
 				]
 			]
 ,			[
-				25,
+				23,
 				cr.plugins_.Spritefont2.prototype.acts.SetText,
 				null,
 				4173707837709517,
@@ -24181,7 +24205,7 @@ false,false,3640558281439193,false
 					7,
 					[
 						20,
-						24,
+						22,
 						cr.plugins_.Arr.prototype.exps.At,
 						false,
 						null
@@ -24214,7 +24238,7 @@ false,false,3640558281439193,false
 					7,
 					[
 						20,
-						24,
+						22,
 						cr.plugins_.Arr.prototype.exps.At,
 						false,
 						null
@@ -24233,7 +24257,7 @@ false,false,3640558281439193,false
 				]
 			]
 ,			[
-				27,
+				25,
 				cr.plugins_.Spritefont2.prototype.acts.SetText,
 				null,
 				6737495016830725,
@@ -24249,7 +24273,7 @@ false,false,3640558281439193,false
 				]
 			]
 ,			[
-				26,
+				24,
 				cr.plugins_.Function.prototype.acts.CallFunction,
 				null,
 				5651770220627216,
@@ -24268,7 +24292,7 @@ false,false,3640558281439193,false
 				]
 			]
 ,			[
-				23,
+				21,
 				cr.plugins_.Spritefont2.prototype.acts.SetText,
 				null,
 				6749838185062568,
@@ -24313,7 +24337,7 @@ false,false,3640558281439193,false
 			9648557589876298,
 			[
 			[
-				26,
+				24,
 				cr.plugins_.Function.prototype.cnds.OnFunction,
 				null,
 				2,
@@ -24335,7 +24359,7 @@ false,false,3640558281439193,false
 			],
 			[
 			[
-				22,
+				20,
 				cr.plugins_.Spritefont2.prototype.acts.SetText,
 				null,
 				8004750071474561,
@@ -24409,7 +24433,7 @@ false,false,3640558281439193,false
 				],
 				[
 				[
-					22,
+					20,
 					cr.plugins_.Spritefont2.prototype.acts.AppendText,
 					null,
 					579317619276735,
@@ -24436,7 +24460,7 @@ false,false,3640558281439193,false
 				],
 				[
 				[
-					22,
+					20,
 					cr.plugins_.Spritefont2.prototype.acts.SetX,
 					null,
 					6402243573594589,
@@ -24454,7 +24478,7 @@ false,false,3640558281439193,false
 								]
 								,[
 									20,
-									22,
+									20,
 									cr.plugins_.Spritefont2.prototype.exps.TextWidth,
 									false,
 									null
@@ -24469,7 +24493,7 @@ false,false,3640558281439193,false
 					]
 				]
 ,				[
-					23,
+					21,
 					cr.plugins_.Spritefont2.prototype.acts.SetX,
 					null,
 					2598331953561754,
@@ -24479,7 +24503,7 @@ false,false,3640558281439193,false
 						0,
 						[
 							20,
-							22,
+							20,
 							cr.plugins_.Spritefont2.prototype.exps.X,
 							false,
 							null
@@ -24499,7 +24523,7 @@ false,false,3640558281439193,false
 			5887649404946647,
 			[
 			[
-				20,
+				18,
 				cr.plugins_.Sprite.prototype.cnds.OnCollision,
 				null,
 				0,
@@ -24511,7 +24535,7 @@ false,false,3640558281439193,false
 				,[
 				[
 					4,
-					21
+					19
 				]
 				]
 			]
@@ -24529,7 +24553,7 @@ false,false,3640558281439193,false
 				],
 				[
 				[
-					23,
+					21,
 					cr.plugins_.Spritefont2.prototype.acts.AppendText,
 					null,
 					8052078654153103,
@@ -24539,7 +24563,7 @@ false,false,3640558281439193,false
 						7,
 						[
 							20,
-							21,
+							19,
 							cr.plugins_.Spritefont2.prototype.exps.Text,
 							true,
 							null
@@ -24568,7 +24592,7 @@ false,false,3640558281439193,false
 					]
 				]
 ,				[
-					21,
+					19,
 					cr.plugins_.Spritefont2.prototype.acts.Destroy,
 					null,
 					2568774279200103,
@@ -24602,7 +24626,7 @@ false,false,3640558281439193,false
 							,[
 [
 								20,
-								23,
+								21,
 								cr.plugins_.Spritefont2.prototype.exps.Text,
 								true,
 								null
@@ -24655,7 +24679,7 @@ false,false,3640558281439193,false
 							7,
 							[
 								20,
-								23,
+								21,
 								cr.plugins_.Spritefont2.prototype.exps.Text,
 								true,
 								null
@@ -24677,7 +24701,7 @@ false,false,3640558281439193,false
 					],
 					[
 					[
-						26,
+						24,
 						cr.plugins_.Function.prototype.acts.CallFunction,
 						null,
 						779491203120804,
@@ -24718,7 +24742,7 @@ false,false,3640558281439193,false
 					],
 					[
 					[
-						26,
+						24,
 						cr.plugins_.Function.prototype.acts.CallFunction,
 						null,
 						5365261276903942,
@@ -24750,7 +24774,7 @@ false,false,3640558281439193,false
 			6842983647891986,
 			[
 			[
-				28,
+				26,
 				cr.plugins_.Sprite.prototype.cnds.OnCollision,
 				null,
 				0,
@@ -24762,14 +24786,14 @@ false,false,3640558281439193,false
 				,[
 				[
 					4,
-					21
+					19
 				]
 				]
 			]
 			],
 			[
 			[
-				21,
+				19,
 				cr.plugins_.Spritefont2.prototype.acts.Destroy,
 				null,
 				5980274313097179,
@@ -24798,7 +24822,7 @@ false,false,3640558281439193,false
 			],
 			[
 			[
-				29,
+				27,
 				cr.plugins_.Audio.prototype.acts.Stop,
 				null,
 				7175519587851868,
@@ -24838,7 +24862,7 @@ false,false,3640558281439193,false
 			7437277335003682,
 			[
 			[
-				16,
+				14,
 				cr.plugins_.Keyboard.prototype.cnds.OnKey,
 				null,
 				1,
@@ -24855,7 +24879,7 @@ false,false,3640558281439193,false
 				]
 			]
 ,			[
-				16,
+				14,
 				cr.plugins_.Keyboard.prototype.cnds.IsKeyDown,
 				null,
 				0,
@@ -24872,7 +24896,7 @@ false,false,3640558281439193,false
 				]
 			]
 ,			[
-				16,
+				14,
 				cr.plugins_.Keyboard.prototype.cnds.IsKeyDown,
 				null,
 				0,
@@ -24889,7 +24913,7 @@ false,false,3640558281439193,false
 				]
 			]
 ,			[
-				16,
+				14,
 				cr.plugins_.Keyboard.prototype.cnds.IsKeyDown,
 				null,
 				0,
@@ -24906,7 +24930,7 @@ false,false,3640558281439193,false
 				]
 			]
 ,			[
-				16,
+				14,
 				cr.plugins_.Keyboard.prototype.cnds.IsKeyDown,
 				null,
 				0,
@@ -24946,9 +24970,77 @@ false,false,3640558281439193,false
 		[
 		]
 	]
+,	[
+		"LogoSheet",
+		[
+		[
+			0,
+			null,
+			false,
+			null,
+			9819842430476146,
+			[
+			[
+				31,
+				cr.behaviors.Fade.prototype.cnds.OnFadeOutEnd,
+				"Fade",
+				1,
+				false,
+				false,
+				false,
+				2841480877129068,
+				false
+			]
+			],
+			[
+			[
+				32,
+				cr.behaviors.Fade.prototype.acts.StartFade,
+				"Fade",
+				7190445215229816,
+				false
+			]
+			]
+		]
+,		[
+			0,
+			null,
+			false,
+			null,
+			1453918712434746,
+			[
+			[
+				32,
+				cr.behaviors.Fade.prototype.cnds.OnFadeOutEnd,
+				"Fade",
+				1,
+				false,
+				false,
+				false,
+				2405764500945574,
+				false
+			]
+			],
+			[
+			[
+				-1,
+				cr.system_object.prototype.acts.GoToLayout,
+				null,
+				4725160510478951,
+				false
+				,[
+				[
+					6,
+					"Start Screen"
+				]
+				]
+			]
+			]
+		]
+		]
+	]
 	],
 	[
-		["ren and stimpy soundtrack - screw on the loose.ogg", 832546]
 	],
 	"media/",
 	true,
@@ -24963,7 +25055,7 @@ false,false,3640558281439193,false
 	true,
 	0,
 	2,
-	40,
+	39,
 	true,
 	true,
 	1,
