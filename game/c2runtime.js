@@ -16616,6 +16616,653 @@ cr.plugins_.Audio = function(runtime)
 }());
 ;
 ;
+cr.plugins_.Browser = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var pluginProto = cr.plugins_.Browser.prototype;
+	pluginProto.Type = function(plugin)
+	{
+		this.plugin = plugin;
+		this.runtime = plugin.runtime;
+	};
+	var typeProto = pluginProto.Type.prototype;
+	typeProto.onCreate = function()
+	{
+	};
+	pluginProto.Instance = function(type)
+	{
+		this.type = type;
+		this.runtime = type.runtime;
+	};
+	var instanceProto = pluginProto.Instance.prototype;
+	instanceProto.onCreate = function()
+	{
+		var self = this;
+		window.addEventListener("resize", function () {
+			self.runtime.trigger(cr.plugins_.Browser.prototype.cnds.OnResize, self);
+		});
+		if (typeof navigator.onLine !== "undefined")
+		{
+			window.addEventListener("online", function() {
+				self.runtime.trigger(cr.plugins_.Browser.prototype.cnds.OnOnline, self);
+			});
+			window.addEventListener("offline", function() {
+				self.runtime.trigger(cr.plugins_.Browser.prototype.cnds.OnOffline, self);
+			});
+		}
+		if (typeof window.applicationCache !== "undefined")
+		{
+			window.applicationCache.addEventListener('updateready', function() {
+				self.runtime.loadingprogress = 1;
+				self.runtime.trigger(cr.plugins_.Browser.prototype.cnds.OnUpdateReady, self);
+			});
+			window.applicationCache.addEventListener('progress', function(e) {
+				self.runtime.loadingprogress = e["loaded"] / e["total"];
+			});
+		}
+		if (!this.runtime.isDirectCanvas)
+		{
+			document.addEventListener("appMobi.device.update.available", function() {
+				self.runtime.trigger(cr.plugins_.Browser.prototype.cnds.OnUpdateReady, self);
+			});
+			document.addEventListener("backbutton", function() {
+				self.runtime.trigger(cr.plugins_.Browser.prototype.cnds.OnBackButton, self);
+			});
+			document.addEventListener("menubutton", function() {
+				self.runtime.trigger(cr.plugins_.Browser.prototype.cnds.OnMenuButton, self);
+			});
+			document.addEventListener("searchbutton", function() {
+				self.runtime.trigger(cr.plugins_.Browser.prototype.cnds.OnSearchButton, self);
+			});
+			document.addEventListener("tizenhwkey", function (e) {
+				var ret;
+				switch (e["keyName"]) {
+				case "back":
+					ret = self.runtime.trigger(cr.plugins_.Browser.prototype.cnds.OnBackButton, self);
+					if (!ret)
+					{
+						if (window["tizen"])
+							window["tizen"]["application"]["getCurrentApplication"]()["exit"]();
+					}
+					break;
+				case "menu":
+					ret = self.runtime.trigger(cr.plugins_.Browser.prototype.cnds.OnMenuButton, self);
+					if (!ret)
+						e.preventDefault();
+					break;
+				}
+			});
+		}
+		if (this.runtime.isWindowsPhone81)
+		{
+			WinJS["Application"]["onbackclick"] = function (e)
+			{
+				return !!self.runtime.trigger(cr.plugins_.Browser.prototype.cnds.OnBackButton, self);
+			};
+		}
+		this.runtime.addSuspendCallback(function(s) {
+			if (s)
+			{
+				self.runtime.trigger(cr.plugins_.Browser.prototype.cnds.OnPageHidden, self);
+			}
+			else
+			{
+				self.runtime.trigger(cr.plugins_.Browser.prototype.cnds.OnPageVisible, self);
+			}
+		});
+		this.is_arcade = (typeof window["is_scirra_arcade"] !== "undefined");
+	};
+	function Cnds() {};
+	Cnds.prototype.CookiesEnabled = function()
+	{
+		return navigator ? navigator.cookieEnabled : false;
+	};
+	Cnds.prototype.IsOnline = function()
+	{
+		return navigator ? navigator.onLine : false;
+	};
+	Cnds.prototype.HasJava = function()
+	{
+		return navigator ? navigator.javaEnabled() : false;
+	};
+	Cnds.prototype.OnOnline = function()
+	{
+		return true;
+	};
+	Cnds.prototype.OnOffline = function()
+	{
+		return true;
+	};
+	Cnds.prototype.IsDownloadingUpdate = function ()
+	{
+		if (typeof window["applicationCache"] === "undefined")
+			return false;
+		else
+			return window["applicationCache"]["status"] === window["applicationCache"]["DOWNLOADING"];
+	};
+	Cnds.prototype.OnUpdateReady = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.PageVisible = function ()
+	{
+		return !this.runtime.isSuspended;
+	};
+	Cnds.prototype.OnPageVisible = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.OnPageHidden = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.OnResize = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.IsFullscreen = function ()
+	{
+		return !!(document["mozFullScreen"] || document["webkitIsFullScreen"] || document["fullScreen"] || this.runtime.isNodeFullscreen);
+	};
+	Cnds.prototype.OnBackButton = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.OnMenuButton = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.OnSearchButton = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.IsMetered = function ()
+	{
+		var connection = navigator["connection"] || navigator["mozConnection"] || navigator["webkitConnection"];
+		if (!connection)
+			return false;
+		return connection["metered"];
+	};
+	Cnds.prototype.IsCharging = function ()
+	{
+		var battery = navigator["battery"] || navigator["mozBattery"] || navigator["webkitBattery"];
+		if (!battery)
+			return true;
+		return battery["charging"];
+	};
+	Cnds.prototype.IsPortraitLandscape = function (p)
+	{
+		var current = (window.innerWidth <= window.innerHeight ? 0 : 1);
+		return current === p;
+	};
+	pluginProto.cnds = new Cnds();
+	function Acts() {};
+	Acts.prototype.Alert = function (msg)
+	{
+		if (!this.runtime.isDomFree)
+			alert(msg.toString());
+	};
+	Acts.prototype.Close = function ()
+	{
+		if (this.runtime.isCocoonJs)
+			CocoonJS["App"]["forceToFinish"]();
+		else if (window["tizen"])
+			window["tizen"]["application"]["getCurrentApplication"]()["exit"]();
+		else if (navigator["app"] && navigator["app"]["exitApp"])
+			navigator["app"]["exitApp"]();
+		else if (navigator["device"] && navigator["device"]["exitApp"])
+			navigator["device"]["exitApp"]();
+		else if (!this.is_arcade && !this.runtime.isDomFree)
+			window.close();
+	};
+	Acts.prototype.Focus = function ()
+	{
+		if (this.runtime.isNodeWebkit)
+		{
+			var win = window["nwgui"]["Window"]["get"]();
+			win["focus"]();
+		}
+		else if (!this.is_arcade && !this.runtime.isDomFree)
+			window.focus();
+	};
+	Acts.prototype.Blur = function ()
+	{
+		if (this.runtime.isNodeWebkit)
+		{
+			var win = window["nwgui"]["Window"]["get"]();
+			win["blur"]();
+		}
+		else if (!this.is_arcade && !this.runtime.isDomFree)
+			window.blur();
+	};
+	Acts.prototype.GoBack = function ()
+	{
+		if (navigator["app"] && navigator["app"]["backHistory"])
+			navigator["app"]["backHistory"]();
+		else if (!this.is_arcade && !this.runtime.isDomFree && window.back)
+			window.back();
+	};
+	Acts.prototype.GoForward = function ()
+	{
+		if (!this.is_arcade && !this.runtime.isDomFree && window.forward)
+			window.forward();
+	};
+	Acts.prototype.GoHome = function ()
+	{
+		if (!this.is_arcade && !this.runtime.isDomFree && window.home)
+			window.home();
+	};
+	Acts.prototype.GoToURL = function (url, target)
+	{
+		if (this.runtime.isCocoonJs)
+			CocoonJS["App"]["openURL"](url);
+		else if (this.runtime.isEjecta)
+			ejecta["openURL"](url);
+		else if (this.runtime.isWinJS)
+			Windows["System"]["Launcher"]["launchUriAsync"](new Windows["Foundation"]["Uri"](url));
+		else if (navigator["app"] && navigator["app"]["loadUrl"])
+			navigator["app"]["loadUrl"](url, { "openExternal": true });
+		else if (this.runtime.isPhoneGap)
+			window.open(url, "_system");
+		else if (!this.is_arcade && !this.runtime.isDomFree)
+		{
+			if (target === 2 && !this.is_arcade)		// top
+				window.top.location = url;
+			else if (target === 1 && !this.is_arcade)	// parent
+				window.parent.location = url;
+			else					// self
+				window.location = url;
+		}
+	};
+	Acts.prototype.GoToURLWindow = function (url, tag)
+	{
+		if (this.runtime.isCocoonJs)
+			CocoonJS["App"]["openURL"](url);
+		else if (this.runtime.isEjecta)
+			ejecta["openURL"](url);
+		else if (this.runtime.isWinJS)
+			Windows["System"]["Launcher"]["launchUriAsync"](new Windows["Foundation"]["Uri"](url));
+		else if (navigator["app"] && navigator["app"]["loadUrl"])
+			navigator["app"]["loadUrl"](url, { "openExternal": true });
+		else if (this.runtime.isPhoneGap)
+			window.open(url, "_system");
+		else if (!this.is_arcade && !this.runtime.isDomFree)
+			window.open(url, tag);
+	};
+	Acts.prototype.Reload = function ()
+	{
+		if (!this.is_arcade && !this.runtime.isDomFree)
+			window.location.reload();
+	};
+	var firstRequestFullscreen = true;
+	var crruntime = null;
+	function onFullscreenError(e)
+	{
+		if (console && console.warn)
+			console.warn("Fullscreen request failed: ", e);
+		crruntime["setSize"](window.innerWidth, window.innerHeight);
+	};
+	Acts.prototype.RequestFullScreen = function (stretchmode)
+	{
+		if (this.runtime.isDomFree)
+		{
+			cr.logexport("[Construct 2] Requesting fullscreen is not supported on this platform - the request has been ignored");
+			return;
+		}
+		if (stretchmode >= 2)
+			stretchmode += 1;
+		if (stretchmode === 6)
+			stretchmode = 2;
+		if (this.runtime.isNodeWebkit)
+		{
+			if (!this.runtime.isNodeFullscreen)
+			{
+				window["nwgui"]["Window"]["get"]()["enterFullscreen"]();
+				this.runtime.isNodeFullscreen = true;
+				this.runtime.fullscreen_scaling = (stretchmode >= 2 ? stretchmode : 0);
+			}
+		}
+		else
+		{
+			if (document["mozFullScreen"] || document["webkitIsFullScreen"] || !!document["msFullscreenElement"] || document["fullScreen"] || document["fullScreenElement"])
+			{
+				return;
+			}
+			this.runtime.fullscreen_scaling = (stretchmode >= 2 ? stretchmode : 0);
+			var elem = this.runtime.canvasdiv || this.runtime.canvas;
+			if (firstRequestFullscreen)
+			{
+				firstRequestFullscreen = false;
+				crruntime = this.runtime;
+				elem.addEventListener("mozfullscreenerror", onFullscreenError);
+				elem.addEventListener("webkitfullscreenerror", onFullscreenError);
+				elem.addEventListener("MSFullscreenError", onFullscreenError);
+				elem.addEventListener("fullscreenerror", onFullscreenError);
+			}
+			if (elem["requestFullscreen"])
+				elem["requestFullscreen"]();
+			else if (elem["mozRequestFullScreen"])
+				elem["mozRequestFullScreen"]();
+			else if (elem["msRequestFullscreen"])
+				elem["msRequestFullscreen"]();
+			else if (elem["webkitRequestFullScreen"])
+			{
+				if (typeof Element !== "undefined" && typeof Element["ALLOW_KEYBOARD_INPUT"] !== "undefined")
+					elem["webkitRequestFullScreen"](Element["ALLOW_KEYBOARD_INPUT"]);
+				else
+					elem["webkitRequestFullScreen"]();
+			}
+		}
+	};
+	Acts.prototype.CancelFullScreen = function ()
+	{
+		if (this.runtime.isDomFree)
+		{
+			cr.logexport("[Construct 2] Exiting fullscreen is not supported on this platform - the request has been ignored");
+			return;
+		}
+		if (this.runtime.isNodeWebkit)
+		{
+			if (this.runtime.isNodeFullscreen)
+			{
+				window["nwgui"]["Window"]["get"]()["leaveFullscreen"]();
+				this.runtime.isNodeFullscreen = false;
+			}
+		}
+		else
+		{
+			if (document["exitFullscreen"])
+				document["exitFullscreen"]();
+			else if (document["mozCancelFullScreen"])
+				document["mozCancelFullScreen"]();
+			else if (document["msExitFullscreen"])
+				document["msExitFullscreen"]();
+			else if (document["webkitCancelFullScreen"])
+				document["webkitCancelFullScreen"]();
+		}
+	};
+	Acts.prototype.Vibrate = function (pattern_)
+	{
+		try {
+			var arr = pattern_.split(",");
+			var i, len;
+			for (i = 0, len = arr.length; i < len; i++)
+			{
+				arr[i] = parseInt(arr[i], 10);
+			}
+			if (navigator["vibrate"])
+				navigator["vibrate"](arr);
+			else if (navigator["mozVibrate"])
+				navigator["mozVibrate"](arr);
+			else if (navigator["webkitVibrate"])
+				navigator["webkitVibrate"](arr);
+			else if (navigator["msVibrate"])
+				navigator["msVibrate"](arr);
+		}
+		catch (e) {}
+	};
+	Acts.prototype.InvokeDownload = function (url_, filename_)
+	{
+		var a = document.createElement("a");
+		if (typeof a["download"] === "undefined")
+		{
+			window.open(url_);
+		}
+		else
+		{
+			var body = document.getElementsByTagName("body")[0];
+			a.textContent = filename_;
+			a.href = url_;
+			a["download"] = filename_;
+			body.appendChild(a);
+			var clickEvent = document.createEvent("MouseEvent");
+			clickEvent.initMouseEvent("click", true, true, window, 0, 0, 0, 0, 0, false, false, false, false, 0, null);
+			a.dispatchEvent(clickEvent);
+			body.removeChild(a);
+		}
+	};
+	Acts.prototype.InvokeDownloadString = function (str_, mimetype_, filename_)
+	{
+		var datauri = "data:" + mimetype_ + "," + encodeURIComponent(str_);
+		var a = document.createElement("a");
+		if (typeof a["download"] === "undefined")
+		{
+			window.open(datauri);
+		}
+		else
+		{
+			var body = document.getElementsByTagName("body")[0];
+			a.textContent = filename_;
+			a.href = datauri;
+			a["download"] = filename_;
+			body.appendChild(a);
+			var clickEvent = document.createEvent("MouseEvent");
+			clickEvent.initMouseEvent("click", true, true, window, 0, 0, 0, 0, 0, false, false, false, false, 0, null);
+			a.dispatchEvent(clickEvent);
+			body.removeChild(a);
+		}
+	};
+	Acts.prototype.ConsoleLog = function (type_, msg_)
+	{
+		if (typeof console === "undefined")
+			return;
+		if (type_ === 0 && console.log)
+			console.log(msg_.toString());
+		if (type_ === 1 && console.warn)
+			console.warn(msg_.toString());
+		if (type_ === 2 && console.error)
+			console.error(msg_.toString());
+	};
+	Acts.prototype.ConsoleGroup = function (name_)
+	{
+		if (console && console.group)
+			console.group(name_);
+	};
+	Acts.prototype.ConsoleGroupEnd = function ()
+	{
+		if (console && console.groupEnd)
+			console.groupEnd();
+	};
+	Acts.prototype.ExecJs = function (js_)
+	{
+		try {
+			if (eval)
+				eval(js_);
+		}
+		catch (e)
+		{
+			if (console && console.error)
+				console.error("Error executing Javascript: ", e);
+		}
+	};
+	var orientations = [
+		"portrait",
+		"landscape",
+		"portrait-primary",
+		"portrait-secondary",
+		"landscape-primary",
+		"landscape-secondary"
+	];
+	Acts.prototype.LockOrientation = function (o)
+	{
+		o = Math.floor(o);
+		if (o < 0 || o >= orientations.length)
+			return;
+		this.runtime.autoLockOrientation = false;
+		var orientation = orientations[o];
+		if (screen["lockOrientation"])
+			screen["lockOrientation"](orientation);
+		else if (screen["webkitLockOrientation"])
+			screen["webkitLockOrientation"](orientation);
+		else if (screen["mozLockOrientation"])
+			screen["mozLockOrientation"](orientation);
+		else if (screen["msLockOrientation"])
+			screen["msLockOrientation"](orientation);
+	};
+	Acts.prototype.UnlockOrientation = function ()
+	{
+		this.runtime.autoLockOrientation = false;
+		if (screen["unlockOrientation"])
+			screen["unlockOrientation"]();
+		else if (screen["webkitUnlockOrientation"])
+			screen["webkitUnlockOrientation"]();
+		else if (screen["mozUnlockOrientation"])
+			screen["mozUnlockOrientation"]();
+		else if (screen["msUnlockOrientation"])
+			screen["msUnlockOrientation"]();
+	};
+	pluginProto.acts = new Acts();
+	function Exps() {};
+	Exps.prototype.URL = function (ret)
+	{
+		ret.set_string(this.runtime.isDomFree ? "" : window.location.toString());
+	};
+	Exps.prototype.Protocol = function (ret)
+	{
+		ret.set_string(this.runtime.isDomFree ? "" : window.location.protocol);
+	};
+	Exps.prototype.Domain = function (ret)
+	{
+		ret.set_string(this.runtime.isDomFree ? "" : window.location.hostname);
+	};
+	Exps.prototype.PathName = function (ret)
+	{
+		ret.set_string(this.runtime.isDomFree ? "" : window.location.pathname);
+	};
+	Exps.prototype.Hash = function (ret)
+	{
+		ret.set_string(this.runtime.isDomFree ? "" : window.location.hash);
+	};
+	Exps.prototype.Referrer = function (ret)
+	{
+		ret.set_string(this.runtime.isDomFree ? "" : document.referrer);
+	};
+	Exps.prototype.Title = function (ret)
+	{
+		ret.set_string(this.runtime.isDomFree ? "" : document.title);
+	};
+	Exps.prototype.Name = function (ret)
+	{
+		ret.set_string(this.runtime.isDomFree ? "" : navigator.appName);
+	};
+	Exps.prototype.Version = function (ret)
+	{
+		ret.set_string(this.runtime.isDomFree ? "" : navigator.appVersion);
+	};
+	Exps.prototype.Language = function (ret)
+	{
+		if (navigator && navigator.language)
+			ret.set_string(navigator.language);
+		else
+			ret.set_string("");
+	};
+	Exps.prototype.Platform = function (ret)
+	{
+		ret.set_string(this.runtime.isDomFree ? "" : navigator.platform);
+	};
+	Exps.prototype.Product = function (ret)
+	{
+		if (navigator && navigator.product)
+			ret.set_string(navigator.product);
+		else
+			ret.set_string("");
+	};
+	Exps.prototype.Vendor = function (ret)
+	{
+		if (navigator && navigator.vendor)
+			ret.set_string(navigator.vendor);
+		else
+			ret.set_string("");
+	};
+	Exps.prototype.UserAgent = function (ret)
+	{
+		ret.set_string(this.runtime.isDomFree ? "" : navigator.userAgent);
+	};
+	Exps.prototype.QueryString = function (ret)
+	{
+		ret.set_string(this.runtime.isDomFree ? "" : window.location.search);
+	};
+	Exps.prototype.QueryParam = function (ret, paramname)
+	{
+		if (this.runtime.isDomFree)
+		{
+			ret.set_string("");
+			return;
+		}
+		var match = RegExp('[?&]' + paramname + '=([^&]*)').exec(window.location.search);
+		if (match)
+			ret.set_string(decodeURIComponent(match[1].replace(/\+/g, ' ')));
+		else
+			ret.set_string("");
+	};
+	Exps.prototype.Bandwidth = function (ret)
+	{
+		var connection = navigator["connection"] || navigator["mozConnection"] || navigator["webkitConnection"];
+		if (!connection)
+			ret.set_float(Number.POSITIVE_INFINITY);
+		else
+			ret.set_float(connection["bandwidth"]);
+	};
+	Exps.prototype.BatteryLevel = function (ret)
+	{
+		var battery = navigator["battery"] || navigator["mozBattery"] || navigator["webkitBattery"];
+		if (!battery)
+			ret.set_float(1);
+		else
+			ret.set_float(battery["level"]);
+	};
+	Exps.prototype.BatteryTimeLeft = function (ret)
+	{
+		var battery = navigator["battery"] || navigator["mozBattery"] || navigator["webkitBattery"];
+		if (!battery)
+			ret.set_float(Number.POSITIVE_INFINITY);
+		else
+			ret.set_float(battery["dischargingTime"]);
+	};
+	Exps.prototype.ExecJS = function (ret, js_)
+	{
+		if (!eval)
+		{
+			ret.set_any(0);
+			return;
+		}
+		var result = 0;
+		try {
+			result = eval(js_);
+		}
+		catch (e)
+		{
+			if (console && console.error)
+				console.error("Error executing Javascript: ", e);
+		}
+		if (typeof result === "number")
+			ret.set_any(result);
+		else if (typeof result === "string")
+			ret.set_any(result);
+		else if (typeof result === "boolean")
+			ret.set_any(result ? 1 : 0);
+		else
+			ret.set_any(0);
+	};
+	Exps.prototype.ScreenWidth = function (ret)
+	{
+		ret.set_int(screen.width);
+	};
+	Exps.prototype.ScreenHeight = function (ret)
+	{
+		ret.set_int(screen.height);
+	};
+	Exps.prototype.DevicePixelRatio = function (ret)
+	{
+		ret.set_float(this.runtime.devicePixelRatio);
+	};
+	pluginProto.exps = new Exps();
+}());
+;
+;
 cr.plugins_.Button = function(runtime)
 {
 	this.runtime = runtime;
@@ -21934,6 +22581,45 @@ cr.behaviors.Fade = function(runtime)
 }());
 ;
 ;
+cr.behaviors.destroy = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var behaviorProto = cr.behaviors.destroy.prototype;
+	behaviorProto.Type = function(behavior, objtype)
+	{
+		this.behavior = behavior;
+		this.objtype = objtype;
+		this.runtime = behavior.runtime;
+	};
+	var behtypeProto = behaviorProto.Type.prototype;
+	behtypeProto.onCreate = function()
+	{
+	};
+	behaviorProto.Instance = function(type, inst)
+	{
+		this.type = type;
+		this.behavior = type.behavior;
+		this.inst = inst;				// associated object instance to modify
+		this.runtime = type.runtime;
+	};
+	var behinstProto = behaviorProto.Instance.prototype;
+	behinstProto.onCreate = function()
+	{
+	};
+	behinstProto.tick = function ()
+	{
+		this.inst.update_bbox();
+		var bbox = this.inst.bbox;
+		var layout = this.inst.layer.layout;
+		if (bbox.right < 0 || bbox.bottom < 0 || bbox.left > layout.width || bbox.top > layout.height)
+			this.runtime.DestroyInstance(this.inst);
+	};
+}());
+;
+;
 cr.behaviors.solid = function(runtime)
 {
 	this.runtime = runtime;
@@ -22021,6 +22707,18 @@ cr.getProjectModel = function() { return [
 	]
 ,	[
 		cr.plugins_.Function,
+		true,
+		false,
+		false,
+		false,
+		false,
+		false,
+		false,
+		false,
+		false
+	]
+,	[
+		cr.plugins_.Browser,
 		true,
 		false,
 		false,
@@ -22910,6 +23608,188 @@ cr.getProjectModel = function() { return [
 		[],
 		null
 	]
+,	[
+		"t34",
+		cr.plugins_.Text,
+		false,
+		[],
+		0,
+		0,
+		null,
+		null,
+		[
+		],
+		false,
+		false,
+		6418334087339588,
+		[],
+		null
+	]
+,	[
+		"t35",
+		cr.plugins_.Sprite,
+		false,
+		[],
+		2,
+		0,
+		null,
+		[
+			[
+			"Default",
+			5,
+			false,
+			1,
+			0,
+			false,
+			893147507705676,
+			[
+				["images/bomb-sheet0.png", 7286, 0, 0, 128, 128, 1, 0.5, 0.5,[],[-0.1953125,-0.1953125,0,-0.1953125,0.3046875,-0.3046875,0.203125,0,0.2109375,0.2109375,0,0.4140625,-0.328125,0.328125,-0.3984375,0],0]
+			]
+			]
+		],
+		[
+		[
+			"DestroyOutsideLayout",
+			cr.behaviors.destroy,
+			5205406608702116
+		]
+,		[
+			"Bullet",
+			cr.behaviors.Bullet,
+			8923568749203006
+		]
+		],
+		false,
+		false,
+		5041853204539785,
+		[],
+		null
+	]
+,	[
+		"t36",
+		cr.plugins_.Text,
+		false,
+		[],
+		0,
+		0,
+		null,
+		null,
+		[
+		],
+		false,
+		false,
+		8299934097200983,
+		[],
+		null
+	]
+,	[
+		"t37",
+		cr.plugins_.Sprite,
+		false,
+		[],
+		0,
+		0,
+		null,
+		[
+			[
+			"Default",
+			5,
+			false,
+			1,
+			0,
+			false,
+			2534367468682339,
+			[
+				["images/creditsbutton-sheet0.png", 1774, 0, 0, 500, 100, 1, 0.5, 0.5,[],[-0.4939999878406525,-0.4699999988079071,0,-0.5,0.4940000176429749,-0.4699999988079071,0.4940000176429749,0.4700000286102295,0,0.5,-0.4939999878406525,0.4700000286102295],0]
+			]
+			]
+		],
+		[
+		],
+		false,
+		false,
+		3014551179303785,
+		[],
+		null
+	]
+,	[
+		"t38",
+		cr.plugins_.Sprite,
+		false,
+		[],
+		0,
+		0,
+		null,
+		[
+			[
+			"Default",
+			5,
+			false,
+			1,
+			0,
+			false,
+			9658702684474006,
+			[
+				["images/quitbutton-sheet0.png", 1432, 0, 0, 500, 100, 1, 0.5, 0.5,[],[-0.4939999878406525,-0.4699999988079071,0,-0.5,0.4940000176429749,-0.4699999988079071,0.4940000176429749,0.4700000286102295,0,0.5,-0.4939999878406525,0.4700000286102295],0]
+			]
+			]
+		],
+		[
+		],
+		false,
+		false,
+		1074746225117692,
+		[],
+		null
+	]
+,	[
+		"t39",
+		cr.plugins_.Browser,
+		false,
+		[],
+		0,
+		0,
+		null,
+		null,
+		[
+		],
+		false,
+		false,
+		602575031661984,
+		[],
+		null
+		,[]
+	]
+,	[
+		"t40",
+		cr.plugins_.Sprite,
+		false,
+		[],
+		0,
+		0,
+		null,
+		[
+			[
+			"Default",
+			5,
+			false,
+			1,
+			0,
+			false,
+			6543243567333183,
+			[
+				["images/credits-sheet0.png", 82302, 0, 0, 1280, 4000, 1, 0.5, 0.5,[],[-0.1937499940395355,-0.4020000100135803,0,-0.4930000007152557,0.188281238079071,-0.4002500176429749,0.3343750238418579,0.4470000267028809,-0.332812488079071,0.4465000033378601],0]
+			]
+			]
+		],
+		[
+		],
+		false,
+		false,
+		5547208129201395,
+		[],
+		null
+	]
 	],
 	[
 	],
@@ -23028,8 +23908,8 @@ cr.getProjectModel = function() { return [
 				]
 			]
 ,			[
-				[640, 461, 0, 500, 100, 0, 0, 1, 0.5, 0.5, 0, 0, []],
-				2,
+				[640, 464, 0, 500, 100, 0, 0, 1, 0.5, 0.5, 0, 0, []],
+				37,
 				4,
 				[
 				],
@@ -23043,6 +23923,39 @@ cr.getProjectModel = function() { return [
 				]
 			]
 ,			[
+				[640, 573, 0, 500, 100, 0, 0, 1, 0.5, 0.5, 0, 0, []],
+				38,
+				10,
+				[
+				],
+				[
+				],
+				[
+					0,
+					"Default",
+					0,
+					1
+				]
+			]
+			],
+			[			]
+		]
+,		[
+			"Layer 1",
+			1,
+			5294980312940316,
+			true,
+			[255, 255, 255],
+			true,
+			1,
+			1,
+			1,
+			false,
+			1,
+			0,
+			0,
+			[
+			[
 				[0, 0, 0, 1280, 720, 0, 0, 1, 0, 0, 0, 0, []],
 				30,
 				8,
@@ -23060,160 +23973,6 @@ cr.getProjectModel = function() { return [
 				[
 					0,
 					0
-				]
-			]
-			],
-			[			]
-		]
-		],
-		[
-		],
-		[]
-	]
-,	[
-		"Option Screen",
-		1280,
-		720,
-		false,
-		"optionSheet",
-		5302798269259827,
-		[
-		[
-			"Layer 0",
-			0,
-			2488930854365501,
-			true,
-			[255, 255, 255],
-			false,
-			1,
-			1,
-			1,
-			false,
-			1,
-			0,
-			0,
-			[
-			[
-				[640, 125, 0, 500, 212, 0, 0, 1, 0.5, 0.5, 0, 0, []],
-				0,
-				14,
-				[
-				],
-				[
-				],
-				[
-					0,
-					"Default",
-					0,
-					1
-				]
-			]
-,			[
-				[444.5, 278, 0, 391, 30, 0, 0, 1, 0, 0, 0, 0, []],
-				9,
-				15,
-				[
-				],
-				[
-				],
-				[
-					0,
-					0,
-					100,
-					1,
-					"",
-					1,
-					1,
-					""
-				]
-			]
-,			[
-				[540, 238, 0, 200, 41, 0, 0, 1, 0, 0, 0, 0, []],
-				10,
-				16,
-				[
-				],
-				[
-				],
-				[
-					"Sound Volume",
-					0,
-					"20pt Arial",
-					"rgb(0,0,0)",
-					1,
-					1,
-					0,
-					0,
-					0
-				]
-			]
-,			[
-				[540, 321, 0, 200, 41, 0, 0, 1, 0, 0, 0, 0, []],
-				11,
-				17,
-				[
-				],
-				[
-				],
-				[
-					"Music Volume",
-					0,
-					"20pt Arial",
-					"rgb(0,0,0)",
-					1,
-					1,
-					0,
-					0,
-					0
-				]
-			]
-,			[
-				[444.5, 363, 0, 391, 30, 0, 0, 1, 0, 0, 0, 0, []],
-				12,
-				18,
-				[
-				],
-				[
-				],
-				[
-					0,
-					0,
-					100,
-					1,
-					"",
-					1,
-					1,
-					""
-				]
-			]
-,			[
-				[640, 462, 0, 250, 50, 0, 0, 1, 0.5, 0.5, 0, 0, []],
-				13,
-				19,
-				[
-				],
-				[
-				],
-				[
-					0,
-					"Default",
-					0,
-					1
-				]
-			]
-,			[
-				[640, 572, 0, 500, 100, 0, 0, 1, 0.5, 0.5, 0, 0, []],
-				8,
-				20,
-				[
-				],
-				[
-				],
-				[
-					0,
-					"Default",
-					0,
-					1
 				]
 			]
 			],
@@ -23463,6 +24222,71 @@ cr.getProjectModel = function() { return [
 					1
 				]
 			]
+,			[
+				[640, 18, 0, 296, 30, 0, 0, 1, 0.5, 0.5, 0, 0, []],
+				34,
+				6,
+				[
+				],
+				[
+				],
+				[
+					"Press M to go to Main Menu",
+					0,
+					"12pt Arial",
+					"rgb(0,0,0)",
+					1,
+					2,
+					1,
+					0,
+					0
+				]
+			]
+,			[
+				[615, -225, 0, 48, 48, 0, 0, 1, 0.5, 0.5, 0, 0, []],
+				35,
+				7,
+				[
+				],
+				[
+				[
+				],
+				[
+					200,
+					0,
+					0,
+					0,
+					0,
+					1
+				]
+				],
+				[
+					0,
+					"Default",
+					0,
+					1
+				]
+			]
+,			[
+				[0, 0, 0, 1280, 720, 0, 0, 1, 0, 0, 0, 0, []],
+				36,
+				9,
+				[
+				],
+				[
+				],
+				[
+					"Oh no, you hit a bomb! Game over.",
+					1,
+					"36pt Arial",
+					"rgb(0,0,0)",
+					1,
+					1,
+					0,
+					0,
+					0
+				]
+			]
 			],
 			[			]
 		]
@@ -23606,6 +24430,65 @@ cr.getProjectModel = function() { return [
 					1,
 					"",
 					0
+				]
+			]
+			],
+			[			]
+		]
+		],
+		[
+		],
+		[]
+	]
+,	[
+		"Credits Screen",
+		1708,
+		960,
+		false,
+		"CreditsSheet",
+		8854662731824293,
+		[
+		[
+			"Layer 0",
+			0,
+			1705567975525682,
+			true,
+			[255, 255, 255],
+			false,
+			1,
+			1,
+			1,
+			false,
+			1,
+			0,
+			0,
+			[
+			[
+				[0, 0, 0, 1280, 720, 0, 0, 1, 0, 0, 0, 0, []],
+				29,
+				12,
+				[
+				],
+				[
+				],
+				[
+					0,
+					0
+				]
+			]
+,			[
+				[640, 2723, 0, 1280, 4000, 0, 0, 1, 0.5, 0.5, 0, 0, []],
+				40,
+				13,
+				[
+				],
+				[
+				],
+				[
+					0,
+					"Default",
+					0,
+					1
 				]
 			]
 			],
@@ -23847,6 +24730,13 @@ cr.getProjectModel = function() { return [
 			[
 			[
 				27,
+				cr.plugins_.Audio.prototype.acts.StopAll,
+				null,
+				7572464152037038,
+				false
+			]
+,			[
+				27,
 				cr.plugins_.Audio.prototype.acts.Play,
 				null,
 				6293289054555845,
@@ -23878,22 +24768,6 @@ cr.getProjectModel = function() { return [
 			]
 ,			[
 				27,
-				cr.plugins_.Audio.prototype.acts.Stop,
-				null,
-				65778348696364,
-				false
-				,[
-				[
-					1,
-					[
-						2,
-						"loop"
-					]
-				]
-				]
-			]
-,			[
-				27,
 				cr.plugins_.Audio.prototype.acts.Preload,
 				null,
 				6870928300933178,
@@ -23902,6 +24776,124 @@ cr.getProjectModel = function() { return [
 				[
 					2,
 					["space fighter loop",true]
+				]
+				]
+			]
+,			[
+				39,
+				cr.plugins_.Browser.prototype.acts.LockOrientation,
+				null,
+				4625064624197364,
+				false
+				,[
+				[
+					3,
+					1
+				]
+				]
+			]
+,			[
+				27,
+				cr.plugins_.Audio.prototype.acts.Preload,
+				null,
+				2451942896671413,
+				false
+				,[
+				[
+					2,
+					["cipher2",true]
+				]
+				]
+			]
+			]
+		]
+,		[
+			0,
+			null,
+			false,
+			null,
+			992444779089244,
+			[
+			[
+				3,
+				cr.plugins_.Mouse.prototype.cnds.OnObjectClicked,
+				null,
+				1,
+				false,
+				false,
+				false,
+				6429081462408641,
+				false
+				,[
+				[
+					3,
+					0
+				]
+,				[
+					3,
+					0
+				]
+,				[
+					4,
+					38
+				]
+				]
+			]
+			],
+			[
+			[
+				39,
+				cr.plugins_.Browser.prototype.acts.Close,
+				null,
+				8467599805999898,
+				false
+			]
+			]
+		]
+,		[
+			0,
+			null,
+			false,
+			null,
+			5316011376657657,
+			[
+			[
+				3,
+				cr.plugins_.Mouse.prototype.cnds.OnObjectClicked,
+				null,
+				1,
+				false,
+				false,
+				false,
+				9066889885388068,
+				false
+				,[
+				[
+					3,
+					0
+				]
+,				[
+					3,
+					0
+				]
+,				[
+					4,
+					37
+				]
+				]
+			]
+			],
+			[
+			[
+				-1,
+				cr.system_object.prototype.acts.GoToLayout,
+				null,
+				6843691763439713,
+				false
+				,[
+				[
+					6,
+					"Credits Screen"
 				]
 				]
 			]
@@ -26428,6 +27420,241 @@ false,false,3640558281439193,false
 			]
 			]
 		]
+,		[
+			0,
+			null,
+			false,
+			null,
+			2572997541707243,
+			[
+			[
+				14,
+				cr.plugins_.Keyboard.prototype.cnds.OnKey,
+				null,
+				1,
+				false,
+				false,
+				false,
+				5669108756851422,
+				false
+				,[
+				[
+					9,
+					77
+				]
+				]
+			]
+			],
+			[
+			[
+				-1,
+				cr.system_object.prototype.acts.GoToLayout,
+				null,
+				2237238268791571,
+				false
+				,[
+				[
+					6,
+					"Start Screen"
+				]
+				]
+			]
+			]
+		]
+,		[
+			0,
+			null,
+			false,
+			null,
+			6962110187058186,
+			[
+			[
+				-1,
+				cr.system_object.prototype.cnds.Every,
+				null,
+				0,
+				false,
+				false,
+				false,
+				69774249787,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						2
+					]
+				]
+				]
+			]
+			],
+			[
+			[
+				-1,
+				cr.system_object.prototype.acts.CreateObject,
+				null,
+				6276525252379972,
+				false
+				,[
+				[
+					4,
+					35
+				]
+,				[
+					5,
+					[
+						0,
+						0
+					]
+				]
+,				[
+					0,
+					[
+						4,
+						[
+							19,
+							cr.system_object.prototype.exps.random
+							,[
+[
+								0,
+								1200
+							]
+							]
+						]
+						,[
+							0,
+							40
+						]
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						32
+					]
+				]
+				]
+			]
+,			[
+				35,
+				cr.behaviors.Bullet.prototype.acts.SetAngleOfMotion,
+				"Bullet",
+				8062343481519988,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						90
+					]
+				]
+				]
+			]
+			]
+		]
+,		[
+			0,
+			null,
+			false,
+			null,
+			9586987373314775,
+			[
+			[
+				18,
+				cr.plugins_.Sprite.prototype.cnds.OnCollision,
+				null,
+				0,
+				false,
+				false,
+				true,
+				8120866640298219,
+				false
+				,[
+				[
+					4,
+					35
+				]
+				]
+			]
+			],
+			[
+			[
+				18,
+				cr.plugins_.Sprite.prototype.acts.Destroy,
+				null,
+				1481455309371571,
+				false
+			]
+,			[
+				39,
+				cr.plugins_.Browser.prototype.acts.Vibrate,
+				null,
+				1023995704083012,
+				false
+				,[
+				[
+					1,
+					[
+						2,
+						"200,100,200"
+					]
+				]
+				]
+			]
+,			[
+				36,
+				cr.plugins_.Text.prototype.acts.SetVisible,
+				null,
+				2182886290061149,
+				false
+				,[
+				[
+					3,
+					1
+				]
+				]
+			]
+,			[
+				-1,
+				cr.system_object.prototype.acts.Wait,
+				null,
+				4514303101264202,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						5
+					]
+				]
+				]
+			]
+,			[
+				36,
+				cr.plugins_.Text.prototype.acts.Destroy,
+				null,
+				1012600461660838,
+				false
+			]
+,			[
+				-1,
+				cr.system_object.prototype.acts.GoToLayout,
+				null,
+				4809642478417073,
+				false
+				,[
+				[
+					6,
+					"Start Screen"
+				]
+				]
+			]
+			]
+		]
 		]
 	]
 ,	[
@@ -26627,6 +27854,154 @@ false,false,3640558281439193,false
 				[
 					2,
 					["hypnothis",true]
+				]
+				]
+			]
+			]
+		]
+		]
+	]
+,	[
+		"CreditsSheet",
+		[
+		[
+			0,
+			null,
+			false,
+			null,
+			3030850275141883,
+			[
+			[
+				-1,
+				cr.system_object.prototype.cnds.OnLayoutStart,
+				null,
+				1,
+				false,
+				false,
+				false,
+				9650753247640378,
+				false
+			]
+			],
+			[
+			[
+				27,
+				cr.plugins_.Audio.prototype.acts.StopAll,
+				null,
+				1371274739505509,
+				false
+			]
+,			[
+				27,
+				cr.plugins_.Audio.prototype.acts.Play,
+				null,
+				3943829926609119,
+				false
+				,[
+				[
+					2,
+					["cipher2",true]
+				]
+,				[
+					3,
+					0
+				]
+,				[
+					0,
+					[
+						0,
+						0
+					]
+				]
+,				[
+					1,
+					[
+						2,
+						"credits"
+					]
+				]
+				]
+			]
+			]
+		]
+,		[
+			0,
+			null,
+			false,
+			null,
+			6632470721772935,
+			[
+			[
+				-1,
+				cr.system_object.prototype.cnds.EveryTick,
+				null,
+				0,
+				false,
+				false,
+				false,
+				6440945274902284,
+				false
+			]
+			],
+			[
+			[
+				40,
+				cr.plugins_.Sprite.prototype.acts.SetY,
+				null,
+				6913302762828194,
+				false
+				,[
+				[
+					0,
+					[
+						5,
+						[
+							20,
+							40,
+							cr.plugins_.Sprite.prototype.exps.Y,
+							false,
+							null
+						]
+						,[
+							0,
+							1
+						]
+					]
+				]
+				]
+			]
+			]
+		]
+,		[
+			0,
+			null,
+			false,
+			null,
+			194828698465024,
+			[
+			[
+				14,
+				cr.plugins_.Keyboard.prototype.cnds.OnAnyKey,
+				null,
+				1,
+				false,
+				false,
+				false,
+				3917513078204186,
+				false
+			]
+			],
+			[
+			[
+				-1,
+				cr.system_object.prototype.acts.GoToLayout,
+				null,
+				3671111703336958,
+				false
+				,[
+				[
+					6,
+					"Start Screen"
 				]
 				]
 			]

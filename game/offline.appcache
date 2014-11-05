@@ -1,5 +1,5 @@
 ﻿CACHE MANIFEST
-#1415191819
+#1415194332
 index.html
 c2runtime.js
 jquery-2.0.0.min.js
@@ -19,8 +19,13 @@ images/background.png
 images/blackbg.png
 images/csslogo-sheet0.png
 images/paintlogo-sheet0.png
+images/bomb-sheet0.png
+images/creditsbutton-sheet0.png
+images/quitbutton-sheet0.png
+images/credits-sheet0.png
 media/hypnothis.ogg
 media/space%20fighter%20loop.ogg
+media/cipher2.ogg
 icon-16.png
 icon-32.png
 icon-114.png
