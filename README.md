@@ -1,4 +1,4 @@
 Catch the Letter
 ====================
 
-"Please tell me what you think" Gaben 2010
+Catch the Letter is a HTML5 game that aims to develop student's vocabulary.
