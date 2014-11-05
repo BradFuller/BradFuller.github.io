@@ -20625,6 +20625,518 @@ cr.plugins_.sliderbar = function(runtime)
 }());
 ;
 ;
+cr.plugins_.video = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var pluginProto = cr.plugins_.video.prototype;
+	pluginProto.Type = function(plugin)
+	{
+		this.plugin = plugin;
+		this.runtime = plugin.runtime;
+	};
+	var typeProto = pluginProto.Type.prototype;
+	typeProto.onCreate = function()
+	{
+	};
+	typeProto.onLostWebGLContext = function ()
+	{
+		if (this.is_family)
+			return;
+		var i, len, inst;
+		for (i = 0, len = this.instances.length; i < len; ++i)
+		{
+			inst = this.instances[i];
+			inst.webGL_texture = null;		// will lazy create again on next draw
+		}
+	};
+	var tmpVideo = document.createElement("video");
+	var can_play_webm = !!tmpVideo.canPlayType("video/webm");
+	var can_play_ogv = !!tmpVideo.canPlayType("video/ogg");
+	var can_play_mp4 = !!tmpVideo.canPlayType("video/mp4");
+	tmpVideo = null;
+	function isVideoPlaying(v)
+	{
+		return v && !v.paused && !v.ended && v.currentTime > 0;
+	};
+	pluginProto.Instance = function(type)
+	{
+		this.type = type;
+		this.runtime = type.runtime;
+	};
+	var instanceProto = pluginProto.Instance.prototype;
+	var playOnNextTouch = [];
+	document.addEventListener("touchstart", function ()
+	{
+		var i, len;
+		for (i = 0, len = playOnNextTouch.length; i < len; ++i)
+		{
+			playOnNextTouch[i].play();
+		}
+		playOnNextTouch.length = 0;
+	}, true);
+	instanceProto.queueVideoPlay = function (add)
+	{
+		if (!this.video)
+			return;
+		var i;
+		if (!add)
+		{
+			i = playOnNextTouch.indexOf(this.video);
+			if (i >= 0)
+				playOnNextTouch.splice(i, 1);
+			return;
+		}
+		if (this.useNextTouchWorkaround && !this.runtime.isInUserInputEvent)
+		{
+			i = playOnNextTouch.indexOf(this.video);
+			if (i === -1)
+				playOnNextTouch.push(this.video);
+		}
+		else	// otherwise can play right away
+			this.video.play();
+	};
+	instanceProto.onCreate = function()
+	{
+		this.webm_src = this.properties[0];
+		this.ogv_src = this.properties[1];
+		this.mp4_src = this.properties[2];
+		this.autoplay = this.properties[3];		// 0 = no, 1 = preload, 2 = yes
+		this.video = document.createElement("video");
+		this.webGL_texture = null;
+		this.lastDecodedFrame = -1;
+		this.currentTrigger = -1;
+		this.viaCanvas = null;
+		this.viaCtx = null;
+		this.useViaCanvasWorkaround = this.runtime.isIE;
+		var self = this;
+		this.video.addEventListener("canplay", function () {
+			self.currentTrigger = 0;
+			self.runtime.trigger(cr.plugins_.video.prototype.cnds.OnPlaybackEvent, self);
+		});
+		this.video.addEventListener("canplaythrough", function () {
+			self.currentTrigger = 1;
+			self.runtime.trigger(cr.plugins_.video.prototype.cnds.OnPlaybackEvent, self);
+		});
+		this.video.addEventListener("ended", function () {
+			self.currentTrigger = 2;
+			self.runtime.trigger(cr.plugins_.video.prototype.cnds.OnPlaybackEvent, self);
+		});
+		this.video.addEventListener("error", function () {
+			self.currentTrigger = 3;
+			self.runtime.trigger(cr.plugins_.video.prototype.cnds.OnPlaybackEvent, self);
+		});
+		this.video.addEventListener("loadstart", function () {
+			self.currentTrigger = 4;
+			self.runtime.trigger(cr.plugins_.video.prototype.cnds.OnPlaybackEvent, self);
+		});
+		this.video.addEventListener("playing", function () {
+			self.currentTrigger = 5;
+			self.runtime.trigger(cr.plugins_.video.prototype.cnds.OnPlaybackEvent, self);
+		});
+		this.video.addEventListener("pause", function () {
+			self.currentTrigger = 6;
+			self.runtime.trigger(cr.plugins_.video.prototype.cnds.OnPlaybackEvent, self);
+		});
+		this.video.addEventListener("stalled", function () {
+			self.currentTrigger = 7;
+			self.runtime.trigger(cr.plugins_.video.prototype.cnds.OnPlaybackEvent, self);
+		});
+		this.useNextTouchWorkaround = ((this.runtime.isiOS || (this.runtime.isAndroid && (this.runtime.isChrome || this.runtime.isAndroidStockBrowser))) && !this.runtime.isCrosswalk && !this.runtime.isDomFree);
+		if (this.autoplay === 0)
+		{
+			this.video.autoplay = false;
+			this.video.preload = "none";
+		}
+		else if (this.autoplay === 1)
+		{
+			this.video.autoplay = false;
+			this.video.preload = "auto";
+		}
+		else if (this.autoplay === 2)
+		{
+			this.video.autoplay = true;
+			if (this.useNextTouchWorkaround)
+				this.queueVideoPlay(true);
+		}
+		this.setSource(this.webm_src, this.ogv_src, this.mp4_src);
+		this.useDom = (this.runtime.isSafari && this.runtime.isiOS && !this.runtime.isDomFree);
+		this.element_hidden = false;
+		if (this.useDom)
+		{
+			jQuery(this.video).appendTo(this.runtime.canvasdiv ? this.runtime.canvasdiv : "body");
+			this.video.addEventListener("contextmenu", function (e) { e.preventDefault(); e.stopPropagation(); return false; }, false);
+			if (this.video.hasAttribute("controls"))
+				this.video.removeAttribute("controls")
+			this.video.setAttribute("webkit-playsinline", "");
+			if (this.properties[4] === 0)		// initially invisible
+			{
+				jQuery(this.video).hide();
+				this.visible = false;
+				this.element_hidden = true;
+			}
+		}
+		else
+		{
+			this.visible = (this.properties[4] !== 0);
+		}
+		this.lastLeft = 0;
+		this.lastTop = 0;
+		this.lastRight = 0;
+		this.lastBottom = 0;
+		this.lastWinWidth = 0;
+		this.lastWinHeight = 0;
+		if (this.useDom)
+			this.updatePosition(true);
+		this.runtime.tickMe(this);
+	};
+	instanceProto.setSource = function (webm_src, ogv_src, mp4_src)
+	{
+		if (can_play_webm && webm_src)
+			this.video.src = webm_src;
+		else if (can_play_ogv && ogv_src)
+			this.video.src = ogv_src;
+		else if (can_play_mp4 && mp4_src)
+			this.video.src = mp4_src;
+		this.lastDecodedFrame = -1;
+		if (this.runtime.glwrap && this.webGL_texture)
+		{
+			this.runtime.glwrap.deleteTexture(this.webGL_texture);
+			this.webGL_texture = null;
+		}
+		this.viaCanvas = null;
+		this.viaCtx = null;
+	};
+	instanceProto.onDestroy = function ()
+	{
+		this.queueVideoPlay(false);
+		if (this.runtime.glwrap && this.webGL_texture)
+		{
+			this.runtime.glwrap.deleteTexture(this.webGL_texture);
+			this.webGL_texture = null;
+		}
+		if (this.useDom)
+			jQuery(this.video).remove();
+		this.viaCanvas = null;
+		this.viaCtx = null;
+		this.video = null;
+	};
+	instanceProto.tick = function ()
+	{
+		if (isVideoPlaying(this.video) && !this.useDom)
+			this.runtime.redraw = true;
+		if (this.useDom)
+			this.updatePosition();
+	};
+	instanceProto.updatePosition = function (first)
+	{
+		if (this.runtime.isDomFree || !this.useDom)
+			return;
+		var videoWidth = this.video.videoWidth;
+		var videoHeight = this.video.videoHeight;
+		if (videoWidth <= 0)
+			videoWidth = 320;
+		if (videoHeight <= 0)
+			videoHeight = 240;
+		var videoAspect = videoWidth / videoHeight;
+		var dispWidth = this.width;
+		var dispHeight = this.height;
+		var dispAspect = dispWidth / dispHeight;
+		var offx = 0;
+		var offy = 0;
+		var drawWidth = 0;
+		var drawHeight = 0;
+		if (dispAspect > videoAspect)
+		{
+			drawWidth = dispHeight * videoAspect;
+			drawHeight = dispHeight;
+			offx = Math.floor((dispWidth - drawWidth) / 2);
+			if (offx < 0)
+				offx = 0;
+		}
+		else
+		{
+			drawWidth = dispWidth;
+			drawHeight = dispWidth / videoAspect;
+			offy = Math.floor((dispHeight - drawHeight) / 2);
+			if (offy < 0)
+				offy = 0;
+		}
+		var ax = this.x + offx;
+		var ay = this.y + offy;
+		var left = this.layer.layerToCanvas(ax, ay, true);
+		var top = this.layer.layerToCanvas(ax, ay, false);
+		var right = this.layer.layerToCanvas(ax + drawWidth, ay + drawHeight, true);
+		var bottom = this.layer.layerToCanvas(ax + drawWidth, ay + drawHeight, false);
+		if (!this.visible || !this.layer.visible || right <= 0 || bottom <= 0 || left >= this.runtime.width || top >= this.runtime.height)
+		{
+			if (!this.element_hidden)
+				jQuery(this.video).hide();
+			this.element_hidden = true;
+			return;
+		}
+		if (left < 1)
+			left = 1;
+		if (top < 1)
+			top = 1;
+		if (right >= this.runtime.width)
+			right = this.runtime.width - 1;
+		if (bottom >= this.runtime.height)
+			bottom = this.runtime.height - 1;
+		var curWinWidth = window.innerWidth;
+		var curWinHeight = window.innerHeight;
+		if (!first && this.lastLeft === left && this.lastTop === top && this.lastRight === right && this.lastBottom === bottom && this.lastWinWidth === curWinWidth && this.lastWinHeight === curWinHeight)
+		{
+			if (this.element_hidden)
+			{
+				jQuery(this.video).show();
+				this.element_hidden = false;
+			}
+			if (!this.runtime.isiOS || this.runtime.tickcount % 30 !== 0)
+				return;
+		}
+		this.lastLeft = left;
+		this.lastTop = top;
+		this.lastRight = right;
+		this.lastBottom = bottom;
+		this.lastWinWidth = curWinWidth;
+		this.lastWinHeight = curWinHeight;
+		if (this.element_hidden)
+		{
+			jQuery(this.video).show();
+			this.element_hidden = false;
+		}
+		var offx = Math.round(left) + jQuery(this.runtime.canvas).offset().left;
+		var offy = Math.round(top) + jQuery(this.runtime.canvas).offset().top;
+		jQuery(this.video).css("position", "absolute");
+		jQuery(this.video).offset({left: offx, top: offy});
+		jQuery(this.video).width(Math.round(right - left));
+		jQuery(this.video).height(Math.round(bottom - top));
+	};
+	instanceProto.saveToJSON = function ()
+	{
+		return {
+		};
+	};
+	instanceProto.loadFromJSON = function (o)
+	{
+	};
+	instanceProto.draw = function (ctx)
+	{
+		if (!this.video || this.useDom)
+			return;		// no video to draw or using off-canvas DOM element
+		var videoWidth = this.video.videoWidth;
+		var videoHeight = this.video.videoHeight;
+		if (videoWidth <= 0 || videoHeight <= 0)
+			return;		// not yet loaded metadata
+		var videoAspect = videoWidth / videoHeight;
+		var dispWidth = this.width;
+		var dispHeight = this.height;
+		var dispAspect = dispWidth / dispHeight;
+		var offx = 0;
+		var offy = 0;
+		var drawWidth = 0;
+		var drawHeight = 0;
+		if (dispAspect > videoAspect)
+		{
+			drawWidth = dispHeight * videoAspect;
+			drawHeight = dispHeight;
+			offx = Math.floor((dispWidth - drawWidth) / 2);
+			if (offx < 0)
+				offx = 0;
+		}
+		else
+		{
+			drawWidth = dispWidth;
+			drawHeight = dispWidth / videoAspect;
+			offy = Math.floor((dispHeight - drawHeight) / 2);
+			if (offy < 0)
+				offy = 0;
+		}
+		ctx.globalAlpha = this.opacity;
+		ctx.drawImage(this.video, this.x + offx, this.y + offy, drawWidth, drawHeight);
+	};
+	var tmpRect = new cr.rect(0, 0, 0, 0);
+	var tmpQuad = new cr.quad();
+	instanceProto.drawGL = function (glw)
+	{
+		if (!this.video || this.useDom)
+			return;		// no video to draw or using off-canvas DOM element
+		var videoWidth = this.video.videoWidth;
+		var videoHeight = this.video.videoHeight;
+		if (videoWidth <= 0 || videoHeight <= 0)
+			return;		// not yet loaded metadata
+		var videoAspect = videoWidth / videoHeight;
+		var dispWidth = this.width;
+		var dispHeight = this.height;
+		var dispAspect = dispWidth / dispHeight;
+		var offx = 0;
+		var offy = 0;
+		var drawWidth = 0;
+		var drawHeight = 0;
+		if (dispAspect > videoAspect)
+		{
+			drawWidth = dispHeight * videoAspect;
+			drawHeight = dispHeight;
+			offx = Math.floor((dispWidth - drawWidth) / 2);
+			if (offx < 0)
+				offx = 0;
+		}
+		else
+		{
+			drawWidth = dispWidth;
+			drawHeight = dispWidth / videoAspect;
+			offy = Math.floor((dispHeight - drawHeight) / 2);
+			if (offy < 0)
+				offy = 0;
+		}
+		var updatetexture = false;
+		if (!this.webGL_texture)
+		{
+			this.webGL_texture = glw.createEmptyTexture(videoWidth, videoHeight, this.runtime.linearSampling, false, false);
+			updatetexture = true;
+		}
+		var framecount = this.video["webkitDecodedFrameCount"] || this.video["mozDecodedFrames"];
+		if (!framecount)
+		{
+			updatetexture = true;		// frame count not available, have to update every frame
+		}
+		else if (framecount > this.lastDecodedFrame)
+		{
+			updatetexture = true;
+			this.lastDecodedFrame = framecount;
+		}
+		if (updatetexture)
+		{
+			if (this.useViaCanvasWorkaround)
+			{
+				if (!this.viaCtx)
+				{
+					this.viaCanvas = document.createElement("canvas");
+					this.viaCanvas.width = videoWidth;
+					this.viaCanvas.height = videoHeight;
+					this.viaCtx = this.viaCanvas.getContext("2d");
+				}
+				this.viaCtx.drawImage(this.video, 0, 0);
+				glw.videoToTexture(this.viaCanvas, this.webGL_texture);
+			}
+			else
+			{
+				glw.videoToTexture(this.video, this.webGL_texture);
+			}
+		}
+		glw.setBlend(this.srcBlend, this.destBlend);
+		glw.setOpacity(this.opacity);
+		glw.setTexture(this.webGL_texture);
+		tmpRect.set(this.x + offx, this.y + offy, this.x + offx + drawWidth, this.y + offy + drawHeight);
+		tmpQuad.set_from_rect(tmpRect);
+		glw.quad(tmpQuad.tlx, tmpQuad.tly, tmpQuad.trx, tmpQuad.try_, tmpQuad.brx, tmpQuad.bry, tmpQuad.blx, tmpQuad.bly);
+	};
+	function dbToLinear_nocap(x)
+	{
+		return Math.pow(10, x / 20);
+	};
+	function linearToDb_nocap(x)
+	{
+		return (Math.log(x) / Math.log(10)) * 20;
+	};
+	function dbToLinear(x)
+	{
+		var v = dbToLinear_nocap(x);
+		if (v < 0)
+			v = 0;
+		if (v > 1)
+			v = 1;
+		return v;
+	};
+	function linearToDb(x)
+	{
+		if (x < 0)
+			x = 0;
+		if (x > 1)
+			x = 1;
+		return linearToDb_nocap(x);
+	};
+	function Cnds() {};
+	Cnds.prototype.IsPlaying = function ()
+	{
+		return isVideoPlaying(this.video);
+	};
+	Cnds.prototype.IsPaused = function ()
+	{
+		return this.video.paused;
+	};
+	Cnds.prototype.HasEnded = function ()
+	{
+		return this.video.ended;
+	};
+	Cnds.prototype.IsMuted = function ()
+	{
+		return this.video.muted;
+	};
+	Cnds.prototype.OnPlaybackEvent = function (trig)
+	{
+		return this.currentTrigger === trig;
+	};
+	pluginProto.cnds = new Cnds();
+	function Acts() {};
+	Acts.prototype.SetSource = function (webm_src, ogv_src, mp4_src)
+	{
+		this.setSource(webm_src, ogv_src, mp4_src);
+		this.video.load();
+	};
+	Acts.prototype.SetPlaybackTime = function (s)
+	{
+		try {
+			this.video.currentTime = s;
+		}
+		catch (e)
+		{
+			if (console && console.error)
+				console.error("Exception setting video playback time: ", e);
+		}
+	};
+	Acts.prototype.SetLooping = function (l)
+	{
+		this.video.loop = (l !== 0);
+	};
+	Acts.prototype.SetMuted = function (m)
+	{
+		this.video.muted = (m !== 0);
+	};
+	Acts.prototype.SetVolume = function (v)
+	{
+		this.video.volume = dbToLinear(v);
+	};
+	Acts.prototype.Pause = function ()
+	{
+		this.queueVideoPlay(false);		// remove any play-on-next-touch queue, since we don't want it to be playing any more
+		this.video.pause();
+	};
+	Acts.prototype.Play = function ()
+	{
+		this.queueVideoPlay(true);
+	};
+	pluginProto.acts = new Acts();
+	function Exps() {};
+	Exps.prototype.PlaybackTime = function (ret)
+	{
+		ret.set_float(this.video.currentTime || 0);
+	};
+	Exps.prototype.Duration = function (ret)
+	{
+		ret.set_float(this.video.duration || 0);
+	};
+	Exps.prototype.Volume = function (ret)
+	{
+		ret.set_float(linearToDb(this.video.volume || 0));
+	};
+	pluginProto.exps = new Exps();
+}());
+;
+;
 cr.behaviors.Bullet = function(runtime)
 {
 	this.runtime = runtime;
@@ -21472,18 +21984,6 @@ cr.getProjectModel = function() { return [
 	"Logo Screen",
 	[
 	[
-		cr.plugins_.Audio,
-		true,
-		false,
-		false,
-		false,
-		false,
-		false,
-		false,
-		false,
-		false
-	]
-,	[
 		cr.plugins_.Arr,
 		false,
 		false,
@@ -21501,6 +22001,18 @@ cr.getProjectModel = function() { return [
 		true,
 		true,
 		true,
+		false,
+		false,
+		false,
+		false,
+		false
+	]
+,	[
+		cr.plugins_.Audio,
+		true,
+		false,
+		false,
+		false,
 		false,
 		false,
 		false,
@@ -21556,7 +22068,7 @@ cr.getProjectModel = function() { return [
 		false
 	]
 ,	[
-		cr.plugins_.TiledBg,
+		cr.plugins_.Spritefont2,
 		false,
 		true,
 		true,
@@ -21566,6 +22078,18 @@ cr.getProjectModel = function() { return [
 		true,
 		true,
 		true
+	]
+,	[
+		cr.plugins_.video,
+		false,
+		true,
+		true,
+		true,
+		false,
+		true,
+		true,
+		true,
+		false
 	]
 ,	[
 		cr.plugins_.Text,
@@ -21580,6 +22104,18 @@ cr.getProjectModel = function() { return [
 		false
 	]
 ,	[
+		cr.plugins_.TiledBg,
+		false,
+		true,
+		true,
+		true,
+		true,
+		true,
+		true,
+		true,
+		true
+	]
+,	[
 		cr.plugins_.sliderbar,
 		false,
 		true,
@@ -21590,18 +22126,6 @@ cr.getProjectModel = function() { return [
 		false,
 		false,
 		false
-	]
-,	[
-		cr.plugins_.Spritefont2,
-		false,
-		true,
-		true,
-		true,
-		true,
-		true,
-		true,
-		true,
-		true
 	]
 	],
 	[
@@ -22272,7 +22796,7 @@ cr.getProjectModel = function() { return [
 		[
 		],
 		false,
-		true,
+		false,
 		3569967844651285,
 		[],
 		null
@@ -22317,7 +22841,7 @@ cr.getProjectModel = function() { return [
 			false,
 			7591245098997843,
 			[
-				["images/csslogo-sheet0.png", 2242, 0, 0, 174, 115, 1, 0.5, 0.5043478012084961,[],[-0.4022988677024841,-0.3565217256546021,0,-0.4695651829242706,0.4022988677024841,-0.3565217256546021,0.4252873659133911,-0.008695632219314575,0.3333333134651184,0.2434782981872559,0,0.4956521987915039,-0.3333333134651184,0.2434782981872559,-0.4252873659133911,-0.008695632219314575],0]
+				["images/csslogo-sheet0.png", 2242, 0, 0, 174, 115, 1, 0.5, 0.5043478012084961,[],[-0.4022988975048065,-0.3565217852592468,0,-0.469565212726593,0.4022989869117737,-0.3565217852592468,0.4252870082855225,-0.008695811033248901,0.3333330154418945,0.2434781789779663,0,0.4956521987915039,-0.3333330154418945,0.2434781789779663,-0.4252873957157135,-0.008695811033248901],0]
 			]
 			]
 		],
@@ -22329,7 +22853,7 @@ cr.getProjectModel = function() { return [
 		]
 		],
 		false,
-		true,
+		false,
 		1288503995336444,
 		[],
 		null
@@ -22352,7 +22876,7 @@ cr.getProjectModel = function() { return [
 			false,
 			2256244579227348,
 			[
-				["images/paintlogo-sheet0.png", 33616, 0, 0, 506, 146, 1, 0.5, 0.5,[],[-0.4249011874198914,-0.2397260367870331,0.3853754997253418,-0.1027397215366364,0.47826087474823,0,0.3853754997253418,0.1027397513389587,-0.4367588758468628,0.2808219194412231,-0.4881422817707062,0],0]
+				["images/paintlogo-sheet0.png", 33616, 0, 0, 506, 146, 1, 0.5, 0.5,[],[-0.4249011874198914,-0.2397260069847107,0.3853750228881836,-0.1027399897575378,0.4782609939575195,0,0.3853750228881836,0.1027399897575378,-0.4367589056491852,0.2808219790458679,-0.4881423115730286,0],0]
 			]
 			]
 		],
@@ -22364,8 +22888,25 @@ cr.getProjectModel = function() { return [
 		]
 		],
 		false,
-		true,
+		false,
 		2499213312246149,
+		[],
+		null
+	]
+,	[
+		"t33",
+		cr.plugins_.video,
+		false,
+		[],
+		0,
+		0,
+		null,
+		null,
+		[
+		],
+		false,
+		true,
+		3966487379195819,
 		[],
 		null
 	]
@@ -22398,58 +22939,17 @@ cr.getProjectModel = function() { return [
 			[
 			[
 				[0, 0, 0, 1280, 720, 0, 0, 1, 0, 0, 0, 0, []],
-				29,
+				33,
 				3,
 				[
 				],
 				[
 				],
 				[
-					0,
-					0
-				]
-			]
-,			[
-				[640, 360.8320007324219, 0, 289.5317993164063, 191.3572235107422, 0, 0, 1, 0.5, 0.5043478012084961, 0, 0, []],
-				31,
-				6,
-				[
-				],
-				[
-				[
-					1,
+					"logo.webm",
+					"logo.ogv",
+					"",
 					2,
-					1,
-					2,
-					1
-				]
-				],
-				[
-					0,
-					"Default",
-					0,
-					1
-				]
-			]
-,			[
-				[640, 360, 0, 506, 146, 0, 0, 0, 0.5, 0.5, 0, 0, []],
-				32,
-				7,
-				[
-				],
-				[
-				[
-					0,
-					2,
-					1,
-					2,
-					1
-				]
-				],
-				[
-					0,
-					"Default",
-					0,
 					1
 				]
 			]
@@ -23325,6 +23825,88 @@ cr.getProjectModel = function() { return [
 			]
 			]
 		]
+,		[
+			0,
+			null,
+			false,
+			null,
+			294646268251539,
+			[
+			[
+				-1,
+				cr.system_object.prototype.cnds.OnLayoutStart,
+				null,
+				1,
+				false,
+				false,
+				false,
+				6794188450740318,
+				false
+			]
+			],
+			[
+			[
+				27,
+				cr.plugins_.Audio.prototype.acts.Play,
+				null,
+				6293289054555845,
+				false
+				,[
+				[
+					2,
+					["hypnothis",true]
+				]
+,				[
+					3,
+					1
+				]
+,				[
+					0,
+					[
+						0,
+						0
+					]
+				]
+,				[
+					1,
+					[
+						2,
+						"bgm"
+					]
+				]
+				]
+			]
+,			[
+				27,
+				cr.plugins_.Audio.prototype.acts.Stop,
+				null,
+				65778348696364,
+				false
+				,[
+				[
+					1,
+					[
+						2,
+						"loop"
+					]
+				]
+				]
+			]
+,			[
+				27,
+				cr.plugins_.Audio.prototype.acts.Preload,
+				null,
+				6870928300933178,
+				false
+				,[
+				[
+					2,
+					["space fighter loop",true]
+				]
+				]
+			]
+			]
+		]
 		]
 	]
 ,	[
@@ -24125,6 +24707,966 @@ false,false,3640558281439193,false
 				]
 			]
 ,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				9169693566052419,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						3
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						0
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"personnality"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				4519761147852831,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						3
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						1
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"personality"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				6447664502745437,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						4
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						0
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"himseelf"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				9423130456093817,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						4
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						1
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"himself"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				9509999558423473,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						5
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						0
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"acceptible"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				2706067364756214,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						5
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						1
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"acceptable"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				6820309516685891,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						6
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						0
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"amatur"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				7774571321152179,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						6
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						1
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"amateur"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				1407615468792017,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						7
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						0
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"beleive"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				3843463354879545,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						7
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						1
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"believe"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				1642487036921065,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						8
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						0
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"calender"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				3811771889200678,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						8
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						1
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"calendar"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				3089820835159857,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						9
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						0
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"embarasment"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				7866565162028051,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						9
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						1
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"embarassment"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				430353017800773,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						10
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						0
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"dumbell"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				4790496221068492,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						10
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						1
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"dumbbell"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				7280548406170775,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						11
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						0
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"greatful"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				9764715933644213,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						11
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						1
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"grateful"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				2311080156521398,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						12
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						0
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"harrass"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				503824266019186,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						12
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						1
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"harass"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				5254351718879798,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						13
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						0
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"jewelery"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				9899804461785417,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						13
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						1
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"jewelry"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				9737739614533969,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						14
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						0
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"judgement"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				757497268791876,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						14
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						1
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"judgment"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				6569779322202546,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						15
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						0
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"lisense"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				6496810355717801,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						15
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						1
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"license"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				8829245636959924,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						16
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						0
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"mispell"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				4074689267838599,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						16
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						1
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"misspell"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				4652321565794169,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						17
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						0
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"occasionaly"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				7089859678584493,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						17
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						1
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"occasionally"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				8273721180648135,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						18
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						0
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"maby"
+					]
+				]
+				]
+			]
+,			[
+				22,
+				cr.plugins_.Arr.prototype.acts.SetXY,
+				null,
+				4148011734937671,
+				false
+				,[
+				[
+					0,
+					[
+						0,
+						18
+					]
+				]
+,				[
+					0,
+					[
+						0,
+						1
+					]
+				]
+,				[
+					7,
+					[
+						2,
+						"maybe"
+					]
+				]
+				]
+			]
+,			[
 				24,
 				cr.plugins_.Function.prototype.acts.CallFunction,
 				null,
@@ -24140,6 +25682,53 @@ false,false,3640558281439193,false
 				]
 ,				[
 					13,
+				]
+				]
+			]
+,			[
+				27,
+				cr.plugins_.Audio.prototype.acts.Stop,
+				null,
+				3699564007050278,
+				false
+				,[
+				[
+					1,
+					[
+						2,
+						"bgm"
+					]
+				]
+				]
+			]
+,			[
+				27,
+				cr.plugins_.Audio.prototype.acts.Play,
+				null,
+				3092534296001393,
+				false
+				,[
+				[
+					2,
+					["space fighter loop",true]
+				]
+,				[
+					3,
+					1
+				]
+,				[
+					0,
+					[
+						0,
+						0
+					]
+				]
+,				[
+					1,
+					[
+						2,
+						"loop"
+					]
 				]
 				]
 			]
@@ -24978,46 +26567,17 @@ false,false,3640558281439193,false
 			null,
 			false,
 			null,
-			9819842430476146,
+			2505311209431768,
 			[
 			[
-				31,
-				cr.behaviors.Fade.prototype.cnds.OnFadeOutEnd,
-				"Fade",
-				1,
+				33,
+				cr.plugins_.video.prototype.cnds.HasEnded,
+				null,
+				0,
 				false,
 				false,
 				false,
-				2841480877129068,
-				false
-			]
-			],
-			[
-			[
-				32,
-				cr.behaviors.Fade.prototype.acts.StartFade,
-				"Fade",
-				7190445215229816,
-				false
-			]
-			]
-		]
-,		[
-			0,
-			null,
-			false,
-			null,
-			1453918712434746,
-			[
-			[
-				32,
-				cr.behaviors.Fade.prototype.cnds.OnFadeOutEnd,
-				"Fade",
-				1,
-				false,
-				false,
-				false,
-				2405764500945574,
+				3743844281479964,
 				false
 			]
 			],
@@ -25026,12 +26586,47 @@ false,false,3640558281439193,false
 				-1,
 				cr.system_object.prototype.acts.GoToLayout,
 				null,
-				4725160510478951,
+				5743607773723204,
 				false
 				,[
 				[
 					6,
 					"Start Screen"
+				]
+				]
+			]
+			]
+		]
+,		[
+			0,
+			null,
+			false,
+			null,
+			3484857861170667,
+			[
+			[
+				-1,
+				cr.system_object.prototype.cnds.OnLayoutStart,
+				null,
+				1,
+				false,
+				false,
+				false,
+				2784526529912556,
+				false
+			]
+			],
+			[
+			[
+				27,
+				cr.plugins_.Audio.prototype.acts.Preload,
+				null,
+				5850888782647178,
+				false
+				,[
+				[
+					2,
+					["hypnothis",true]
 				]
 				]
 			]
